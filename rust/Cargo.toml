@@ -1,0 +1,13 @@
+[package]
+name = "sylph"
+version = "0.1.0"
+authors = ["Tristan Konolige <tristan.konolige@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+fuzzy_match = "*"
+neovim-lib = "*"
+anyhow = "*"
+itertools = "*"
+sublime_fuzzy = "*"
+lazysort = "*"

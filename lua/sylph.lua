@@ -1,113 +1,21 @@
 sylph = {}
 
-local function map(ary, fn)
-  local out = {}
-  for _, x in ipairs(ary) do
-    out[#out+1]=fn(x)
-  end
-  return out
-end
+--------------------------------
+-- Globals
+--------------------------------
+local default_provider_args = {
+  run_on_input = false,
+  handler = nil -- function(query: String, callback: Function(List<String>))
+}
 
 local providers = {}
+local filters = {}
 
--- API
--- register(name, initialization)
--- initialization(query, new_data_callback) -> close()
--- new_data_callback items:
--- { path: string }
-function sylph:register(name, initializer)
-  providers[name] = initializer
-end
+local window -- need to store a reference to the shown window so we can set kaymaps for it
 
-local bufname = "__sylph"
--- store a function that will kill the current process
-local end_proc = nil
-
-local function input_handler(initializer)
-  return function(_, buf, changedtick, firstline, lastline)
-    -- We only process updates to the first line, otherwise we infinite loop
-    if firstline == 0 then
-      local line = vim.api.nvim_buf_get_lines(buf, 0, 1, false)
-
-      local win = vim.api.nvim_get_current_win()
-
-      -- start the callback with empty lines to clear the result
-      -- TODO: don't do this unless it takes too long to get results?
-      vim.schedule(vim.schedule_wrap(function()
-        vim.api.nvim_buf_set_lines(buf, 1, -1, false, {})
-        vim.api.nvim_buf_set_var(buf, "selected", -1)
-
-        if end_proc ~= nil then
-          end_proc()
-          end_proc = nil
-        end
-        end_proc = initializer(line[1], function(files)
-          -- TODO: could use nvim_call_atomic to avoid redraws
-          -- TODO: limit number of displayed elements
-          local lines = {}
-          for i, f in ipairs(files) do
-            lines[i] = f.name
-          end
-          vim.schedule(vim.schedule_wrap(function()
-            vim.api.nvim_buf_set_lines(buf, 1, -1, false, lines)
-            vim.api.nvim_win_set_height(win, math.min(30, #lines+1))
-            if #lines > 0 then
-              vim.api.nvim_buf_set_var(buf, "selected", 1)
-            else
-              vim.api.nvim_buf_set_var(buf, "selected", -1)
-            end
-          end))
-        end)
-      end))
-    end
-  end
-end
-
-function sylph:create_window(name)
-  local provider = providers[name]
-  if provider == nil then
-    local keys = {}
-    for k,_ in pairs(providers) do
-      keys[#keys+1] = k
-    end
-    vim.api.nvim_err_writeln(string.format("sylph: Error: provider %s not found. Available providers are %s", name, vim.inspect(keys)))
-    return
-  end
-  local buf = vim.api.nvim_eval("bufnr(\""..bufname.."\")")
-  if buf == -1 then
-    buf = vim.api.nvim_create_buf(false, true)
-    vim.api.nvim_buf_set_name(buf, bufname)
-  end
-  local win = vim.api.nvim_open_win(buf, true, {relative='win', row=20, col=20, width=80, height=1, style="minimal"})
-  vim.api.nvim_buf_set_option(buf, "filetype", "sylph")
-  vim.api.nvim_command("startinsert!")
-
-  local ih = input_handler(provider)
-  vim.api.nvim_buf_attach(buf, false, {on_lines=ih})
-
-  -- keybindings
-  vim.api.nvim_buf_set_keymap(buf, "n", "<esc>", ":lua sylph.close_window()<CR>", {nowait=true,silent=true})
-  vim.api.nvim_buf_set_keymap(buf, "i", "<esc>", "<esc>:lua sylph.close_window()<CR>", {nowait=true,silent=true})
-  vim.api.nvim_buf_set_keymap(buf, "v", "<esc>", "<esc>:lua sylph.close_window()<CR>", {nowait=true,silent=true})
-  vim.api.nvim_buf_set_keymap(buf, "i", "<CR>", "<esc>:lua sylph.enter("..buf..")<CR>", {nowait=true,silent=true})
-
-  -- automatically close window when we loose focus
-  vim.api.nvim_command("au BufLeave <buffer> :lua sylph.close_window()")
-
-  -- selected is one-indexed. -1 indicates nothing is selected
-  -- TODO: keep a model of the data and use model-view-controller or some such
-  vim.api.nvim_buf_set_var(buf, "selected", -1)
-  local n = vim.api.nvim_buf_get_var(buf, "selected")
-end
-
-function sylph.close_window()
-  local win = vim.api.nvim_get_current_win()
-  local buf = vim.api.nvim_get_current_buf()
-  vim.api.nvim_win_close(win, true)
-  if vim.api.nvim_eval("bufnr(\""..bufname.."\")") ~= -1 then
-    vim.api.nvim_command("bw! "..bufname)
-  end
-end
+--------------------------------
+-- Utility functions
+--------------------------------
 
 local function split_lines(x)
   lines = {}
@@ -121,20 +29,149 @@ local function split_lines(x)
   return lines
 end
 
-
--- TODO: use virtual text for cursor
-function sylph:move(buf, dir)
-  local selected = vim.api.nvim_buf_get_var(0, "selected")
-  vim.api.nvim_buf_set_var(0, "selected", (((selected+dir)-1) % (vim.api.nvim_buf_line_count()-1)) + 1)
+local function map(fn, ary)
+  local out = {}
+  for _, x in ipairs(ary) do
+    out[#out+1]=fn(x)
+  end
+  return out
 end
 
-function sylph:enter(buf)
-  local selected = vim.api.nvim_buf_get_var(buf, "selected")
-  if selected > 0 and selected <= vim.api.nvim_buf_line_count(buf) then
-    local file = vim.api.nvim_buf_get_lines(buf, selected, selected+1, true)
-    vim.schedule(function()
-      vim.api.nvim_command(":e " .. file[1])
-    end)
+local function append(x, y)
+  for _, l in ipairs(y) do
+    x[#x+1] = l
+  end
+  return x
+end
+
+--------------------------------
+-- Window creation and handlers
+--------------------------------
+
+function sylph:init(provider_name, filter_name)
+  local provider = providers[provider_name]
+  if provider == nil then
+    vim.api.nvim_err_writeln(string.format("sylph: Error: provider %s not found. Available providers are %s", name, vim.inspect(keys(providers))))
+    return
+  end
+  local filter = filters[filter_name]
+  if filter == nil then
+    vim.api.nvim_err_writeln(string.format("sylph: Error: filter %s not found. Available filters are %s", name, vim.inspect(keys(filters))))
+    return
+  end
+
+  window = {
+    provider = provider,
+    filter = filter,
+    launched_from = vim.api.nvim_eval("bufnr(\"%\")"),
+    query = "",
+    running_proc = nil,
+    selected = 1,
+    lines = {}
+  }
+
+  function window:create()
+    self.buf = vim.api.nvim_create_buf(false, true)
+    vim.api.nvim_buf_set_name(self.buf, "__sylph")
+    self.win = vim.api.nvim_open_win(self.buf, true, {relative="win", row=20, col=20, width=80, height=1, style="minimal"})
+    vim.api.nvim_buf_set_option(self.buf, "filetype", "sylph")
+    vim.api.nvim_buf_set_option(self.buf, "bufhidden", "wipe")
+    vim.api.nvim_command("startinsert!")
+
+    vim.api.nvim_buf_attach(self.buf, false, {on_lines=function(_, _, _, f, l) self:on_input(f,l) end})
+
+    vim.api.nvim_buf_set_keymap(buf, "i", "<esc>", "<esc>:lua sylph:close_window()<CR>", {nowait=true,silent=true})
+    vim.api.nvim_buf_set_keymap(buf, "i", "<CR>", "<C-o>:lua sylph:enter()<CR>", {nowait=true,silent=true})
+    vim.api.nvim_buf_set_keymap(buf, "i", "<C-J>", "<C-o>:lua sylph:move(1)<CR>", {nowait=true,silent=true})
+
+    -- automatically close window when we loose focus
+    vim.api.nvim_command("au WinLeave <buffer> :lua sylph:close_window()")
+
+    -- run initial provider
+    if not self.provider.run_on_input then
+      self.running_proc = self.provider.handler(self.query,
+      function(lines)
+        self.stored_lines = lines
+        self.filter(lines, self.query, function(lines) self:draw(lines) end)
+      end)
+    end
+  end
+
+  function window:on_input(firstline, lastline)
+    -- First line contains the users input, so we only check for changes there
+    if firstline == 0 then
+      self.query = vim.api.nvim_buf_get_lines(self.buf, 0, 1, false)[1]
+      if self.provider.run_on_input then
+        self.running_proc = self.provider.handler(self.query,
+          function(lines)
+            self.filter(lines, self.query, function(lines) self:draw(lines) end)
+          end)
+      else
+        self.filter(self.stored_lines, self.query, function(lines) self:draw(lines) end)
+      end
+    end
+  end
+
+  function window:draw(lines)
+    if lines ~= nil then
+      self.lines = lines
+      self.selected = 1
+      -- TODO: move to config
+      local num_lines = math.min(10, #lines)
+      local formatted = map(function(x) return x.name end, {unpack(lines, 1, num_lines)})
+      vim.schedule(function()
+        vim.api.nvim_buf_set_lines(self.buf, 1, -1, false, formatted)
+        vim.api.nvim_win_set_height(self.win, num_lines+1)
+      end)
+    end
+  end
+
+  function window:move(dir)
+    self.selected = (((self.selected+dir)-1) % #self.lines) + 1
+  end
+
+  function window:enter()
+    if self.selected > 0 and self.selected <= #self.lines then
+      local path = self.lines[self.selected].path
+      -- open current buffer for file if it exists
+      local buf = vim.api.nvim_eval("bufnr(\""..path.."\")")
+      if buf ~= -1 then
+        vim.schedule(function()
+          vim.api.nvim_command(":b " .. buf)
+        end)
+      else
+        vim.schedule(function()
+          vim.api.nvim_command(":e " .. path)
+        end)
+      end
+    end
+  end
+
+  function window:close()
+    vim.api.nvim_command("bw! "..self.buf)
+    window = nil
+  end
+
+  window:create()
+end
+
+function sylph:close_window()
+  window:close()
+end
+
+function sylph:register_provider(name, initializer)
+  if providers[name] ~= nil then
+    vim.api.nvim_err_writeln(string.format("sylph: Error: provider with name %s already exists", name))
+  else
+    providers[name] = initializer
+  end
+end
+
+function sylph:register_filter(name, initializer)
+  if filters[name] ~= nil then
+    vim.api.nvim_err_writeln(string.format("sylph: Error: filter with name %s already exists", name))
+  else
+    filters[name] = initializer
   end
 end
 
@@ -144,18 +181,19 @@ function sylph:process(process_name, args, postprocess)
     local stdout = uv.new_pipe(false)
     local stderr = uv.new_pipe(false)
     local stdin = uv.new_pipe(false)
+    local lines = {}
 
     -- TODO: buffer data until newline
     function onread(err, chunk)
       assert(not err, err)
       if (chunk) then
-        callback(map(split_lines(chunk), postprocess))
+        append(lines, map(postprocess, split_lines(chunk)))
       end
     end
 
     function onreaderr(err, chunk)
       if chunk then
-        vim.schedule(vim.schedule_wrap(vim.api.nvim_err_writeln(string.format("sylph. Error while running command: %s", chunk))))
+        vim.schedule_wrap(function() vim.api.nvim_err_writeln(string.format("sylph: Error while running command: %s", chunk)) end)
         assert(not err, err)
       end
     end
@@ -163,8 +201,9 @@ function sylph:process(process_name, args, postprocess)
     local exited = false
     function onexit(code, signal)
       if code > 0 then
-        assert(not code, code)
+        -- assert(not code, string.format("sylph: Command %s exited with code %s", process_name, code))
       end
+      callback(lines)
       exited = true
     end
 
@@ -172,7 +211,7 @@ function sylph:process(process_name, args, postprocess)
     args_[#args_+1] = query
     handle, pid = uv.spawn(process_name, {args=args_, stdio={stdin, stdout, stderr}}, onexit)
     if pid == nil then
-      vim.schedule(vim.schedule_wrap(vim.api.nvim_err_writeln(string.format("sylph. Error running command %s: %s", args_, handle))))
+      vim.schedule_wrap(function() vim.api.nvim_err_writeln(string.format("sylph. Error running command %s: %s", args_, handle)) end)
     end
     uv.read_start(stdout, onread)
     uv.read_start(stderr, onreaderr)
@@ -185,8 +224,41 @@ function sylph:process(process_name, args, postprocess)
   end
 end
 
-sylph:register("files", sylph:process("fd", {"-t", "f"}, function(x) return {path=x, name=x} end))
-sylph:register("grep", sylph:process("rg", {}, function(line)
-  local path = line:gmatch("[^:]+")
-  return {path=path, name=line}
-end))
+sylph:register_provider("files", {
+  handler = sylph:process("fd", {"-t", "f"}, function(x) return {path=x, name=x} end),
+  run_on_input = false
+})
+sylph:register_provider("grep", {
+  handler = sylph:process("rg", {}, function(line)
+    local path = line:gmatch("[^:]+")
+    return {path=path(), name=line}
+  end),
+  run_on_input = true
+})
+sylph:register_filter("identity", function(data, query, callback) callback(data) end)
+
+function rust_filter()
+  local exe = "rust/target/release/sylph"
+  local job = vim.api.nvim_call_function("jobstart", { { exe }, {rpc=true} })
+  if job == -1 then
+    vim.api.nvim_err_writeln("Could not launch "..exe)
+    return
+  end
+  if job == 0 then
+    vim.api.nvim_err_writeln("Invalid arguments to "..exe)
+    return
+  end
+  return function(data, query, callback)
+    vim.schedule(function()
+      -- TODO: make async
+      local resp = vim.api.nvim_call_function("rpcrequest",
+                                              { job, "match", { query = query
+                                                              , lines = data
+                                                              , context = ""
+                                                              , num_matches = 10
+                                                              }})
+      callback(resp)
+    end)
+  end
+end
+sylph:register_filter("rust", rust_filter())
