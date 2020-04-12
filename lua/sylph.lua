@@ -44,6 +44,17 @@ local function append(x, y)
   return x
 end
 
+local function filter(x)
+  local y = {}
+  for _, l in ipairs(x) do
+    if l ~= nil then
+      y[#y+1] = l
+    end
+  end
+  return y
+end
+
+
 local function keys(tbl)
   ks = {}
   for k, _ in pairs(tbl) do
@@ -111,7 +122,7 @@ function sylph:init(provider_name, filter_name)
 
     -- run initial provider
     if not self.provider.run_on_input then
-      self.running_proc = self.provider.handler(self.query,
+      self.running_proc = self.provider.handler(self, self.query,
       function(lines)
         self.stored_lines = lines
         self.filter(self, lines, self.query, function(lines) self:draw(lines) end)
@@ -124,7 +135,7 @@ function sylph:init(provider_name, filter_name)
     if firstline == 0 then
       self.query = vim.api.nvim_buf_get_lines(self.buf, 0, 1, false)[1]
       if self.provider.run_on_input then
-        self.running_proc = self.provider.handler(self.query,
+        self.running_proc = self.provider.handler(self, self.query,
           function(lines)
             self.filter(self, lines, self.query, function(lines) self:draw(lines) end)
           end)
@@ -219,7 +230,7 @@ function sylph:register_filter(name, initializer)
 end
 
 function sylph:process(process_name, args, postprocess)
-  return function(query, callback)
+  return function(window, query, callback)
     local uv = vim.loop
     local stdout = uv.new_pipe(false)
     local stderr = uv.new_pipe(false)
@@ -230,7 +241,7 @@ function sylph:process(process_name, args, postprocess)
     function onread(err, chunk)
       assert(not err, err)
       if (chunk) then
-        append(lines, map(postprocess, split_lines(chunk)))
+        append(lines, filter(map(function(x) return postprocess(window, x) end, split_lines(chunk))))
       end
     end
 
@@ -268,11 +279,19 @@ function sylph:process(process_name, args, postprocess)
 end
 
 sylph:register_provider("files", {
-  handler = sylph:process("fd", {"-t", "f"}, function(x) return {path=x, name=x} end),
+  handler = sylph:process("fd", {"-t", "f"},
+                          function(window, x)
+                            -- filter out our current file
+                            if window.launched_from_name == x then
+                              return nil
+                            else
+                              return {path=x, name=x}
+                            end
+                          end),
   run_on_input = false
 })
 sylph:register_provider("grep", {
-  handler = sylph:process("rg", {}, function(line)
+  handler = sylph:process("rg", {}, function(window, line)
     local path = line:gmatch("[^:]+")
     return {path=path(), name=line}
   end),
@@ -295,7 +314,6 @@ local function rust_filter()
   return function(window, data, query, callback)
     vim.schedule(function()
       -- TODO: make async
-      print(window.launched_from_name)
       local resp = vim.api.nvim_call_function("rpcrequest",
                                               { job, "match", { query = query
                                                               , lines = data
