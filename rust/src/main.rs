@@ -5,9 +5,11 @@ extern crate itertools;
 extern crate lazysort;
 extern crate neovim_lib;
 extern crate sublime_fuzzy;
+
 use anyhow::{anyhow, Result};
 use lazysort::SortedBy;
 use neovim_lib::{Neovim, RequestHandler, Session, Value};
+use std::collections::HashMap;
 
 fn lookup<'a>(val: &'a Value, key: &str) -> Result<&'a Value> {
     let map: &Vec<(Value, Value)> =
@@ -65,12 +67,14 @@ impl Match {
 fn best_matches(
     query: &str,
     context: &str,
+    frequency: &FrequencyCounter,
     num_matches: u64,
     lines: Vec<Line>,
 ) -> Result<Vec<Match>> {
     Ok(lines
         .iter()
         .filter_map(|line| {
+            let frequency_score = frequency.score(context);
             let ctx_score =
                 sublime_fuzzy::best_match(context, &line.name).map_or(0., |m| m.score() as f64);
             if query.len() > 0 {
@@ -83,7 +87,7 @@ fn best_matches(
                 Some(Match {
                     path: line.path.clone(),
                     name: line.name.clone(),
-                    score: ctx_score,
+                    score: frequency_score + ctx_score,
                 })
             }
         })
@@ -92,7 +96,40 @@ fn best_matches(
         .collect())
 }
 
-struct EventHandler;
+struct FrequencyCounter {
+    counts: HashMap<String, isize>,
+    total: isize,
+}
+
+impl FrequencyCounter {
+    fn new() -> Self {
+        FrequencyCounter {
+            counts: HashMap::new(),
+            total: 0,
+        }
+    }
+
+    fn update(&mut self, entry: &str) {
+        *self.counts.entry(entry.to_string()).or_insert(0) += 1;
+        self.total += 1;
+    }
+
+    fn score(&self, entry: &str) -> f64 {
+        *self.counts.get(entry).unwrap_or(&0) as f64 / self.total as f64
+    }
+}
+
+struct EventHandler {
+    frequency: FrequencyCounter,
+}
+
+impl EventHandler {
+    fn new() -> Self {
+        EventHandler {
+            frequency: FrequencyCounter::new(),
+        }
+    }
+}
 
 impl RequestHandler for EventHandler {
     fn handle_request(
@@ -123,7 +160,11 @@ impl RequestHandler for EventHandler {
                             .map(Line::from_value),
                         |iter| iter.collect::<Vec<_>>(),
                     )?;
-                    let matches = best_matches(query, context, num_matches, lines)?;
+                    if context.len() > 0 {
+                        self.frequency.update(context);
+                    }
+                    let matches =
+                        best_matches(query, context, &self.frequency, num_matches, lines)?;
                     Value::from(
                         matches
                             .into_iter()
@@ -142,7 +183,7 @@ fn main() {
     let session = Session::new_parent().unwrap();
     let mut nvim = Neovim::new(session);
 
-    let handler = EventHandler {};
+    let handler = EventHandler::new();
     let receiver = nvim.session.start_event_loop_channel_handler(handler);
     for _ in receiver {}
 }

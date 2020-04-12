@@ -44,15 +44,30 @@ local function append(x, y)
   return x
 end
 
+local function keys(tbl)
+  ks = {}
+  for k, _ in pairs(tbl) do
+    ks[#ks+1] = k
+  end
+  return ks
+end
+
 --------------------------------
 -- Window creation and handlers
 --------------------------------
 
+local default_filter = "rust"
+
 function sylph:init(provider_name, filter_name)
+  vim.api.nvim_command("stopinsert!")
   local provider = providers[provider_name]
   if provider == nil then
     vim.api.nvim_err_writeln(string.format("sylph: Error: provider %s not found. Available providers are %s", name, vim.inspect(keys(providers))))
     return
+  end
+  -- Use rust as the default filter
+  if filter_name == nil then
+    filter_name = default_filter
   end
   local filter = filters[filter_name]
   if filter == nil then
@@ -60,15 +75,21 @@ function sylph:init(provider_name, filter_name)
     return
   end
 
+  -- Window holds all information for the current fuzzy finder session
   window = {
     provider = provider,
     filter = filter,
     launched_from = vim.api.nvim_eval("bufnr(\"%\")"),
+    launched_from_name = vim.api.nvim_eval("fnamemodify(expand(\"%\"), \":~:.\")"),
     query = "",
     running_proc = nil,
     selected = 1,
     lines = {}
   }
+  -- Ensure window.launched_from_name is a string
+  if window.launched_from_name == nil then
+    window.launched_from_name = ""
+  end
 
   function window:create()
     self.buf = vim.api.nvim_create_buf(false, true)
@@ -83,6 +104,7 @@ function sylph:init(provider_name, filter_name)
     vim.api.nvim_buf_set_keymap(buf, "i", "<esc>", "<esc>:lua sylph:close_window()<CR>", {nowait=true,silent=true})
     vim.api.nvim_buf_set_keymap(buf, "i", "<CR>", "<C-o>:lua sylph:enter()<CR>", {nowait=true,silent=true})
     vim.api.nvim_buf_set_keymap(buf, "i", "<C-J>", "<C-o>:lua sylph:move(1)<CR>", {nowait=true,silent=true})
+    vim.api.nvim_buf_set_keymap(buf, "i", "<C-K>", "<C-o>:lua sylph:move(-1)<CR>", {nowait=true,silent=true})
 
     -- automatically close window when we loose focus
     vim.api.nvim_command("au WinLeave <buffer> :lua sylph:close_window()")
@@ -92,7 +114,7 @@ function sylph:init(provider_name, filter_name)
       self.running_proc = self.provider.handler(self.query,
       function(lines)
         self.stored_lines = lines
-        self.filter(lines, self.query, function(lines) self:draw(lines) end)
+        self.filter(self, lines, self.query, function(lines) self:draw(lines) end)
       end)
     end
   end
@@ -104,10 +126,10 @@ function sylph:init(provider_name, filter_name)
       if self.provider.run_on_input then
         self.running_proc = self.provider.handler(self.query,
           function(lines)
-            self.filter(lines, self.query, function(lines) self:draw(lines) end)
+            self.filter(self, lines, self.query, function(lines) self:draw(lines) end)
           end)
       else
-        self.filter(self.stored_lines, self.query, function(lines) self:draw(lines) end)
+        self.filter(self, self.stored_lines, self.query, function(lines) self:draw(lines) end)
       end
     end
   end
@@ -122,12 +144,22 @@ function sylph:init(provider_name, filter_name)
       vim.schedule(function()
         vim.api.nvim_buf_set_lines(self.buf, 1, -1, false, formatted)
         vim.api.nvim_win_set_height(self.win, num_lines+1)
+        self:update_highlights()
       end)
     end
   end
 
+  window.namespace = vim.api.nvim_create_namespace("sylph")
+  function window:update_highlights()
+    vim.schedule(function()
+      vim.api.nvim_buf_clear_namespace(self.buf, self.namespace, 0, -1)
+      vim.api.nvim_buf_add_highlight(self.buf, self.namespace, "StatusLine", self.selected, 0, -1)
+    end)
+  end
+
   function window:move(dir)
     self.selected = (((self.selected+dir)-1) % #self.lines) + 1
+    self:update_highlights()
   end
 
   function window:enter()
@@ -135,13 +167,16 @@ function sylph:init(provider_name, filter_name)
       local path = self.lines[self.selected].path
       -- open current buffer for file if it exists
       local buf = vim.api.nvim_eval("bufnr(\""..path.."\")")
+      window:close()
       if buf ~= -1 then
         vim.schedule(function()
           vim.api.nvim_command(":b " .. buf)
+          vim.api.nvim_command("stopinsert!")
         end)
       else
         vim.schedule(function()
           vim.api.nvim_command(":e " .. path)
+          vim.api.nvim_command("stopinsert!")
         end)
       end
     end
@@ -157,6 +192,14 @@ end
 
 function sylph:close_window()
   window:close()
+end
+
+function sylph:enter()
+  window:enter()
+end
+
+function sylph:move(dir)
+  window:move(dir)
 end
 
 function sylph:register_provider(name, initializer)
@@ -235,10 +278,11 @@ sylph:register_provider("grep", {
   end),
   run_on_input = true
 })
-sylph:register_filter("identity", function(data, query, callback) callback(data) end)
+sylph:register_filter("identity", function(window, data, query, callback) callback(data) end)
 
-function rust_filter()
-  local exe = "rust/target/release/sylph"
+local function rust_filter()
+  local plugin_dir = vim.api.nvim_eval("expand('<sfile>:p:h:h')")
+  local exe = plugin_dir.."/rust/target/release/sylph"
   local job = vim.api.nvim_call_function("jobstart", { { exe }, {rpc=true} })
   if job == -1 then
     vim.api.nvim_err_writeln("Could not launch "..exe)
@@ -248,13 +292,14 @@ function rust_filter()
     vim.api.nvim_err_writeln("Invalid arguments to "..exe)
     return
   end
-  return function(data, query, callback)
+  return function(window, data, query, callback)
     vim.schedule(function()
       -- TODO: make async
+      print(window.launched_from_name)
       local resp = vim.api.nvim_call_function("rpcrequest",
                                               { job, "match", { query = query
                                                               , lines = data
-                                                              , context = ""
+                                                              , context = window.launched_from_name
                                                               , num_matches = 10
                                                               }})
       callback(resp)
