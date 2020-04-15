@@ -2,14 +2,15 @@
 
 extern crate anyhow;
 extern crate itertools;
-extern crate lazysort;
 extern crate neovim_lib;
 extern crate sublime_fuzzy;
+extern crate rayon;
 
 use anyhow::{anyhow, Result};
-use lazysort::SortedBy;
 use neovim_lib::{Neovim, RequestHandler, Session, Value};
 use std::collections::HashMap;
+use rayon::prelude::*;
+use rayon::iter::IntoParallelIterator;
 
 fn lookup<'a>(val: &'a Value, key: &str) -> Result<&'a Value> {
     let map: &Vec<(Value, Value)> =
@@ -71,29 +72,43 @@ fn best_matches(
     num_matches: u64,
     lines: Vec<Line>,
 ) -> Result<Vec<Match>> {
-    Ok(lines
-        .iter()
+    let mtchs = lines
+        .into_par_iter()
         .filter_map(|line| {
             let frequency_score = frequency.score(context);
             let ctx_score =
                 sublime_fuzzy::best_match(context, &line.name).map_or(0., |m| m.score() as f64);
             if query.len() > 0 {
                 sublime_fuzzy::best_match(query, &line.name).map(|m| Match {
-                    path: line.path.clone(),
-                    name: line.name.clone(),
+                    path: line.path,
+                    name: line.name,
                     score: m.score() as f64 + ctx_score,
                 })
             } else {
                 Some(Match {
-                    path: line.path.clone(),
-                    name: line.name.clone(),
+                    path: line.path,
+                    name: line.name,
                     score: frequency_score + ctx_score,
                 })
             }
         })
-        .sorted_by(|a, b| a.score.partial_cmp(&b.score).unwrap().reverse())
-        .take(num_matches as usize)
-        .collect())
+        .fold(|| Vec::new(), |mut entries, mtch| {
+            if entries.len() < num_matches as usize {
+                entries.push(mtch);
+                entries
+            } else {
+                let pos = entries.iter().position(|x| x.score < mtch.score);
+                match pos {
+                    Some(idx) => entries[idx] = mtch,
+                    None => ()
+                }
+                entries
+            }
+        })
+        .collect::<Vec<Vec<_>>>();
+    let mut short_list = mtchs.into_iter().flatten().collect::<Vec<_>>();
+    short_list.sort_unstable_by(|a,b| a.score.partial_cmp(&b.score).unwrap().reverse());
+    Ok(short_list.into_iter().take(num_matches as usize).collect::<Vec<_>>())
 }
 
 struct FrequencyCounter {
