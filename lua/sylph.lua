@@ -319,7 +319,7 @@ sylph:register_provider("grep", {
   end),
   run_on_input = true
 })
-sylph:register_filter("identity", function(window, data, query, callback) callback(data) end)
+sylph:register_filter("identity", {handler=function(window, data, query, callback) callback(data) end})
 
 local function rust_filter()
   local plugin_dir = vim.api.nvim_eval("expand('<sfile>:p:h:h')")
