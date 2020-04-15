@@ -13,6 +13,8 @@ local filters = {}
 
 local window -- need to store a reference to the shown window so we can set kaymaps for it
 
+local output_file = vim.api.nvim_eval("expand(\"~/.cache/nvim/sylph.log\")")
+
 --------------------------------
 -- Utility functions
 --------------------------------
@@ -91,7 +93,7 @@ function sylph:init(provider_name, filter_name)
     provider = provider,
     filter = filter,
     launched_from = vim.api.nvim_eval("bufnr(\"%\")"),
-    launched_from_name = vim.api.nvim_eval("fnamemodify(expand(\"%\"), \":~:.\")"),
+    launched_from_name = vim.api.nvim_eval("expand(\"%\")"),
     query = "",
     running_proc = nil,
     selected = 1,
@@ -125,7 +127,7 @@ function sylph:init(provider_name, filter_name)
       self.running_proc = self.provider.handler(self, self.query,
       function(lines)
         self.stored_lines = lines
-        self.filter(self, lines, self.query, function(lines) self:draw(lines) end)
+        self.filter.handler(self, lines, self.query, function(lines) self:draw(lines) end)
       end)
     end
   end
@@ -137,11 +139,25 @@ function sylph:init(provider_name, filter_name)
       if self.provider.run_on_input then
         self.running_proc = self.provider.handler(self, self.query,
           function(lines)
-            self.filter(self, lines, self.query, function(lines) self:draw(lines) end)
+            self.filter.handler(self, lines, self.query, function(lines) self:draw(lines) end)
           end)
       else
-        self.filter(self, self.stored_lines, self.query, function(lines) self:draw(lines) end)
+        self.filter.handler(self, self.stored_lines, self.query, function(lines) self:draw(lines) end)
       end
+    end
+  end
+
+  function window:write_selected(selected)
+    if output_file ~= nil then
+      local f = io.open(output_file, "a")
+      f:write(vim.inspect({lines=self.stored_lines,
+                           launched_from=self.launched_from_name,
+                           selected=selected,
+                           provider=self.provider.name,
+                           filter=self.filter.name,
+                           query=self.query
+                          }))
+      f:close()
     end
   end
 
@@ -175,6 +191,10 @@ function sylph:init(provider_name, filter_name)
 
   function window:enter()
     if self.selected > 0 and self.selected <= #self.lines then
+      self:write_selected(self.lines[self.selected])
+      if self.filter.on_selected ~= nil then
+        self.filter.on_selected(self.lines[self.selected])
+      end
       local path = self.lines[self.selected].path
       -- open current buffer for file if it exists
       local buf = vim.api.nvim_eval("bufnr(\""..path.."\")")
@@ -218,6 +238,7 @@ function sylph:register_provider(name, initializer)
     vim.api.nvim_err_writeln(string.format("sylph: Error: provider with name %s already exists", name))
   else
     providers[name] = initializer
+    providers[name].name = name
   end
 end
 
@@ -226,6 +247,7 @@ function sylph:register_filter(name, initializer)
     vim.api.nvim_err_writeln(string.format("sylph: Error: filter with name %s already exists", name))
   else
     filters[name] = initializer
+    filters[name].name = name
   end
 end
 
@@ -288,7 +310,7 @@ sylph:register_provider("files", {
                               return {path=x, name=x}
                             end
                           end),
-  run_on_input = false
+  run_on_input = false,
 })
 sylph:register_provider("grep", {
   handler = sylph:process("rg", {}, function(window, line)
@@ -324,4 +346,4 @@ local function rust_filter()
     end)
   end
 end
-sylph:register_filter("rust", rust_filter())
+sylph:register_filter("rust", {handler = rust_filter(), on_selected = nil})
