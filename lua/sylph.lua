@@ -1,5 +1,7 @@
 sylph = {}
 
+local jobstart = require("job")
+
 --------------------------------
 -- Globals
 --------------------------------
@@ -11,7 +13,7 @@ local default_provider_args = {
 local providers = {}
 local filters = {}
 
-local window -- need to store a reference to the shown window so we can set kaymaps for it
+local window -- need to store a reference to the shown window so we can set keymaps for it
 
 local output_file = vim.api.nvim_eval("expand(\"~/.cache/nvim/sylph.log\")")
 
@@ -324,7 +326,19 @@ sylph:register_filter("identity", {handler=function(window, data, query, callbac
 local function rust_filter()
   local plugin_dir = vim.api.nvim_eval("expand('<sfile>:p:h:h')")
   local exe = plugin_dir.."/rust/target/release/sylph"
-  local job = vim.api.nvim_call_function("jobstart", { { exe }, {rpc=true} })
+  local function on_err(err, lines)
+    vim.schedule(function()
+      vim.api.nvim_err_writeln(string.format("Sylph: error in rust filter: %s", vim.inspect(lines)))
+    end)
+  end
+  local function on_exit(code, signal)
+    vim.schedule(function()
+      vim.api.nvim_err_writeln(string.format("Sylph: rust filter exited with code %s, signal %s", code, signal))
+    end)
+  end
+  local job = jobstart.jobstart({exe}, {rpc=true,
+                                        on_stderr=on_err,
+                                        on_exit=on_exit})
   if job == -1 then
     vim.api.nvim_err_writeln("Could not launch "..exe)
     return
@@ -334,16 +348,12 @@ local function rust_filter()
     return
   end
   return function(window, data, query, callback)
-    vim.schedule(function()
-      -- TODO: make async
-      local resp = vim.api.nvim_call_function("rpcrequest",
-                                              { job, "match", { query = query
-                                                              , lines = data
-                                                              , context = window.launched_from_name
-                                                              , num_matches = 10
-                                                              }})
-      callback(resp)
-    end)
+    job:rpcrequest("match", { query = query
+                            , lines = data
+                            , context = window.launched_from_name
+                            , num_matches = 10
+                          }, callback)
   end
 end
 sylph:register_filter("rust", {handler = rust_filter(), on_selected = nil})
+

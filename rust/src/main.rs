@@ -107,7 +107,7 @@ fn best_matches(
         })
         .collect::<Vec<Vec<_>>>();
     let mut short_list = mtchs.into_iter().flatten().collect::<Vec<_>>();
-    short_list.sort_unstable_by(|a,b| a.score.partial_cmp(&b.score).unwrap().reverse());
+    short_list.sort_unstable_by(|a,b| a.score.partial_cmp(&b.score).unwrap_or(std::cmp::Ordering::Equal).reverse());
     Ok(short_list.into_iter().take(num_matches as usize).collect::<Vec<_>>())
 }
 
@@ -200,5 +200,5 @@ fn main() {
 
     let handler = EventHandler::new();
     let receiver = nvim.session.start_event_loop_channel_handler(handler);
-    for _ in receiver {}
+    for _ in receiver {};
 }
