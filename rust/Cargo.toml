@@ -5,9 +5,17 @@ authors = ["Tristan Konolige <tristan.konolige@gmail.com>"]
 edition = "2018"
 
 [dependencies]
-fuzzy_match = "*"
+fuzzy-matcher = "*"
 neovim-lib = "*"
 anyhow = "*"
 itertools = "*"
 sublime_fuzzy = "*"
 rayon = "*"
+structopt = "*"
+serde_json = "*"
+serde = { version = "*", features = ["derive"] }
+
+[profile.release]
+debug = true
+codegen-units = 1
+lto = true

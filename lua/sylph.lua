@@ -1,6 +1,7 @@
 sylph = {}
 
 local jobstart = require("job")
+local json = require("json")
 
 --------------------------------
 -- Globals
@@ -152,13 +153,14 @@ function sylph:init(provider_name, filter_name)
   function window:write_selected(selected)
     if output_file ~= nil then
       local f = io.open(output_file, "a")
-      f:write(vim.inspect({lines=self.stored_lines,
+      f:write(json.encode({lines=self.stored_lines,
                            launched_from=self.launched_from_name,
                            selected=selected,
                            provider=self.provider.name,
                            filter=self.filter.name,
                            query=self.query
                           }))
+      f:write("\n")
       f:close()
     end
   end
@@ -323,6 +325,7 @@ sylph:register_provider("grep", {
 })
 sylph:register_filter("identity", {handler=function(window, data, query, callback) callback(data) end})
 
+-- TODO: is RPC overhead the cause of slowness here?
 local function rust_filter()
   local plugin_dir = vim.api.nvim_eval("expand('<sfile>:p:h:h')")
   local exe = plugin_dir.."/rust/target/release/sylph"

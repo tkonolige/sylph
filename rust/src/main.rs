@@ -3,14 +3,24 @@
 extern crate anyhow;
 extern crate itertools;
 extern crate neovim_lib;
-extern crate sublime_fuzzy;
 extern crate rayon;
+extern crate structopt;
+extern crate sublime_fuzzy;
+extern crate serde_json;
+extern crate serde;
+extern crate fuzzy_matcher;
 
+use fuzzy_matcher::FuzzyMatcher;
 use anyhow::{anyhow, Result};
 use neovim_lib::{Neovim, RequestHandler, Session, Value};
-use std::collections::HashMap;
-use rayon::prelude::*;
 use rayon::iter::IntoParallelIterator;
+use rayon::prelude::*;
+use std::collections::HashMap;
+use std::path::PathBuf;
+use structopt::StructOpt;
+use std::fs::File;
+use std::io::{BufReader,BufRead};
+use serde::Deserialize;
 
 fn lookup<'a>(val: &'a Value, key: &str) -> Result<&'a Value> {
     let map: &Vec<(Value, Value)> =
@@ -29,6 +39,7 @@ fn lookup<'a>(val: &'a Value, key: &str) -> Result<&'a Value> {
         .map(|x| &x.1)
 }
 
+#[derive(Deserialize)]
 struct Line {
     path: String,
     name: String,
@@ -49,6 +60,7 @@ impl Line {
     }
 }
 
+#[derive(Debug)]
 struct Match {
     path: String,
     name: String,
@@ -73,7 +85,7 @@ fn best_matches(
     lines: Vec<Line>,
 ) -> Result<Vec<Match>> {
     let mtchs = lines
-        .into_par_iter()
+        .into_iter()
         .filter_map(|line| {
             let frequency_score = frequency.score(context);
             let ctx_score =
@@ -92,23 +104,35 @@ fn best_matches(
                 })
             }
         })
-        .fold(|| Vec::new(), |mut entries, mtch| {
-            if entries.len() < num_matches as usize {
-                entries.push(mtch);
-                entries
-            } else {
-                let pos = entries.iter().position(|x| x.score < mtch.score);
-                match pos {
-                    Some(idx) => entries[idx] = mtch,
-                    None => ()
+        .fold(
+            Vec::new(),
+            |mut entries, mtch| {
+                if entries.len() < num_matches as usize {
+                    entries.push(mtch);
+                    entries
+                } else {
+                    let pos = entries.iter().position(|x| x.score < mtch.score);
+                    match pos {
+                        Some(idx) => entries[idx] = mtch,
+                        None => (),
+                    }
+                    entries
                 }
-                entries
-            }
-        })
-        .collect::<Vec<Vec<_>>>();
-    let mut short_list = mtchs.into_iter().flatten().collect::<Vec<_>>();
-    short_list.sort_unstable_by(|a,b| a.score.partial_cmp(&b.score).unwrap_or(std::cmp::Ordering::Equal).reverse());
-    Ok(short_list.into_iter().take(num_matches as usize).collect::<Vec<_>>())
+            },
+        );
+        // .collect::<Vec<Vec<_>>>();
+    // let mut short_list = mtchs.into_iter().flatten().collect::<Vec<_>>();
+    // short_list.sort_unstable_by(|a, b| {
+    //     a.score
+    //         .partial_cmp(&b.score)
+    //         .unwrap_or(std::cmp::Ordering::Equal)
+    //         .reverse()
+    // });
+    let short_list = mtchs;
+    Ok(short_list
+        .into_iter()
+        .take(num_matches as usize)
+        .collect::<Vec<_>>())
 }
 
 struct FrequencyCounter {
@@ -194,11 +218,41 @@ impl RequestHandler for EventHandler {
     }
 }
 
-fn main() {
-    let session = Session::new_parent().unwrap();
-    let mut nvim = Neovim::new(session);
+#[derive(Debug, StructOpt)]
+#[structopt(name = "sylph", about = "Fuzzy finder for use with neovim")]
+struct Opts {
+    #[structopt(long = "test-file", parse(from_os_str))]
+    test_file: Option<PathBuf>,
+}
 
-    let handler = EventHandler::new();
-    let receiver = nvim.session.start_event_loop_channel_handler(handler);
-    for _ in receiver {};
+#[derive(Deserialize)]
+struct Query {
+    query: String,
+    launched_from: String,
+    lines: Vec<Line>,
+}
+
+fn main() {
+    let opt = Opts::from_args();
+    match opt.test_file {
+        Some(path) => {
+            let file = File::open(path).unwrap();
+            let reader = BufReader::new(file);
+            for line in reader.lines() {
+                let l = line.unwrap();
+                let sl = if &l[l.len()-1..] == "\n" { &l[..l.len()-1] } else { &l[..] };
+                let json: Query = serde_json::from_str(sl).unwrap();
+                let matches = best_matches(&json.query, &json.launched_from, &FrequencyCounter::new(), 10, json.lines).unwrap();
+                println!("{:?}", matches);
+            }
+        }
+        None => {
+            let session = Session::new_parent().unwrap();
+            let mut nvim = Neovim::new(session);
+
+            let handler = EventHandler::new();
+            let receiver = nvim.session.start_event_loop_channel_handler(handler);
+            for _ in receiver {}
+        }
+    }
 }
