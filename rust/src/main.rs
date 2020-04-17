@@ -1,26 +1,23 @@
 #![feature(try_blocks)]
 
 extern crate anyhow;
+extern crate fuzzy_matcher;
 extern crate itertools;
 extern crate neovim_lib;
-extern crate rayon;
+extern crate serde;
+extern crate serde_json;
 extern crate structopt;
 extern crate sublime_fuzzy;
-extern crate serde_json;
-extern crate serde;
-extern crate fuzzy_matcher;
 
-use fuzzy_matcher::FuzzyMatcher;
 use anyhow::{anyhow, Result};
+use fuzzy_matcher::FuzzyMatcher;
 use neovim_lib::{Neovim, RequestHandler, Session, Value};
-use rayon::iter::IntoParallelIterator;
-use rayon::prelude::*;
+use serde::Deserialize;
 use std::collections::HashMap;
+use std::fs::File;
+use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use structopt::StructOpt;
-use std::fs::File;
-use std::io::{BufReader,BufRead};
-use serde::Deserialize;
 
 fn lookup<'a>(val: &'a Value, key: &str) -> Result<&'a Value> {
     let map: &Vec<(Value, Value)> =
@@ -84,43 +81,39 @@ fn best_matches(
     num_matches: u64,
     lines: Vec<Line>,
 ) -> Result<Vec<Match>> {
+    let matcher = fuzzy_matcher::skim::SkimMatcherV2::default().use_cache(true);
     let mtchs = lines
         .into_iter()
         .filter_map(|line| {
             let frequency_score = frequency.score(context);
-            let ctx_score =
-                sublime_fuzzy::best_match(context, &line.name).map_or(0., |m| m.score() as f64);
-            if query.len() > 0 {
-                sublime_fuzzy::best_match(query, &line.name).map(|m| Match {
-                    path: line.path,
-                    name: line.name,
-                    score: m.score() as f64 + ctx_score,
-                })
+            // let ctx_score =
+            //     sublime_fuzzy::best_match(context, &line.name).map_or(0., |m| m.score() as f64);
+            let ctx_score = matcher.fuzzy_match(&line.name, context).unwrap_or(0) as f64;
+            let query_score = if query.len() > 0 {
+                matcher.fuzzy_match(&line.name, query).unwrap_or(0)
             } else {
-                Some(Match {
-                    path: line.path,
-                    name: line.name,
-                    score: frequency_score + ctx_score,
-                })
-            }
+                0
+            } as f64;
+            Some(Match {
+                path: line.path,
+                name: line.name,
+                score: frequency_score + ctx_score + query_score,
+            })
         })
-        .fold(
-            Vec::new(),
-            |mut entries, mtch| {
-                if entries.len() < num_matches as usize {
-                    entries.push(mtch);
-                    entries
-                } else {
-                    let pos = entries.iter().position(|x| x.score < mtch.score);
-                    match pos {
-                        Some(idx) => entries[idx] = mtch,
-                        None => (),
-                    }
-                    entries
+        .fold(Vec::new(), |mut entries, mtch| {
+            if entries.len() < num_matches as usize {
+                entries.push(mtch);
+                entries
+            } else {
+                let pos = entries.iter().position(|x| x.score < mtch.score);
+                match pos {
+                    Some(idx) => entries[idx] = mtch,
+                    None => (),
                 }
-            },
-        );
-        // .collect::<Vec<Vec<_>>>();
+                entries
+            }
+        });
+    // .collect::<Vec<Vec<_>>>();
     // let mut short_list = mtchs.into_iter().flatten().collect::<Vec<_>>();
     // short_list.sort_unstable_by(|a, b| {
     //     a.score
@@ -154,7 +147,11 @@ impl FrequencyCounter {
     }
 
     fn score(&self, entry: &str) -> f64 {
-        *self.counts.get(entry).unwrap_or(&0) as f64 / self.total as f64
+        if self.total == 0 {
+            0.
+        } else {
+            *self.counts.get(entry).unwrap_or(&0) as f64 / self.total as f64
+        }
     }
 }
 
@@ -240,9 +237,20 @@ fn main() {
             let reader = BufReader::new(file);
             for line in reader.lines() {
                 let l = line.unwrap();
-                let sl = if &l[l.len()-1..] == "\n" { &l[..l.len()-1] } else { &l[..] };
+                let sl = if &l[l.len() - 1..] == "\n" {
+                    &l[..l.len() - 1]
+                } else {
+                    &l[..]
+                };
                 let json: Query = serde_json::from_str(sl).unwrap();
-                let matches = best_matches(&json.query, &json.launched_from, &FrequencyCounter::new(), 10, json.lines).unwrap();
+                let matches = best_matches(
+                    &json.query,
+                    &json.launched_from,
+                    &FrequencyCounter::new(),
+                    10,
+                    json.lines,
+                )
+                .unwrap();
                 println!("{:?}", matches);
             }
         }
