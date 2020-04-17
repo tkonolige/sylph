@@ -80,8 +80,10 @@ function job.jobstart(cmd, opts)
       if msg[3] then
         vim.schedule(vim.api.err_writeln(string.format("RPC error: %s", msg[3])))
       else
-        callbacks[msg[2]](msg[4])
-        callbacks[msg[2]] = nil
+        if callbacks[msg[2]] then
+          callbacks[msg[2]](msg[4])
+          callbacks[msg[2]] = nil
+        end
       end
     elseif msg[1] == 2 then
       vim.schedule(vim.api.nvim_eval(msg[2], msg[3]))

@@ -350,13 +350,20 @@ local function rust_filter()
     vim.api.nvim_err_writeln("Invalid arguments to "..exe)
     return
   end
-  return function(window, data, query, callback)
+
+  local filter = {}
+  function filter.handler(window, data, query, callback)
     job:rpcrequest("match", { query = query
                             , lines = data
                             , context = window.launched_from_name
                             , num_matches = 10
                           }, callback)
   end
+  function filter.on_selected(line)
+    job:rpcrequest("selected", line, nil)
+  end
+  return filter
 end
-sylph:register_filter("rust", {handler = rust_filter(), on_selected = nil})
+local rfilter = rust_filter()
+sylph:register_filter("rust", {handler = rfilter.handler, on_selected = rfilter.on_selected})
 

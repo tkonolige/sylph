@@ -118,14 +118,6 @@ fn best_matches(
                 entries
             }
         });
-    // .collect::<Vec<Vec<_>>>();
-    // let mut short_list = mtchs.into_iter().flatten().collect::<Vec<_>>();
-    // short_list.sort_unstable_by(|a, b| {
-    //     a.score
-    //         .partial_cmp(&b.score)
-    //         .unwrap_or(std::cmp::Ordering::Equal)
-    //         .reverse()
-    // });
     let short_list = mtchs;
     Ok(short_list
         .into_iter()
@@ -201,9 +193,6 @@ impl RequestHandler for EventHandler {
                             .map(Line::from_value),
                         |iter| iter.collect::<Vec<_>>(),
                     )?;
-                    if context.len() > 0 {
-                        self.frequency.update(context);
-                    }
                     let matches =
                         best_matches(query, context, &self.frequency, num_matches, lines)?;
                     Value::from(
@@ -212,6 +201,11 @@ impl RequestHandler for EventHandler {
                             .map(Match::to_value)
                             .collect::<Vec<Value>>(),
                     )
+                }
+                "selected" => {
+                    let selected = Line::from_value(&args[0])?;
+                    self.frequency.update(&selected.name);
+                    Value::from(true)
                 }
                 f => Err(anyhow!("No such function {}.", f))?,
             }
