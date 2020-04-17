@@ -81,19 +81,24 @@ fn best_matches(
     num_matches: u64,
     lines: Vec<Line>,
 ) -> Result<Vec<Match>> {
-    let matcher = fuzzy_matcher::skim::SkimMatcherV2::default().use_cache(true);
+    let matcher = fuzzy_matcher::skim::SkimMatcherV2::default()
+        .use_cache(true)
+        .smart_case();
     let mtchs = lines
         .into_iter()
         .filter_map(|line| {
             let frequency_score = frequency.score(context);
-            // let ctx_score =
-            //     sublime_fuzzy::best_match(context, &line.name).map_or(0., |m| m.score() as f64);
-            let ctx_score = matcher.fuzzy_match(&line.name, context).unwrap_or(0) as f64;
-            let query_score = if query.len() > 0 {
-                matcher.fuzzy_match(&line.name, query).unwrap_or(0)
+            let ctx_score = if context.len() > 0 {
+                matcher.fuzzy_match(&line.name, context).unwrap_or(0) as f64
+                    / line.name.len() as f64
             } else {
-                0
-            } as f64;
+                0.
+            };
+            let query_score = if query.len() > 0 {
+                matcher.fuzzy_match(&line.name, query).unwrap_or(0) as f64 / line.name.len() as f64
+            } else {
+                0.
+            };
             Some(Match {
                 path: line.path,
                 name: line.name,
