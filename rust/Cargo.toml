@@ -4,6 +4,15 @@ version = "0.1.0"
 authors = ["Tristan Konolige <tristan.konolige@gmail.com>"]
 edition = "2018"
 
+[lib]
+crate-type = ["dylib", "rlib"]
+name = "sylph"
+path = "src/lib.rs"
+
+[[bin]]
+name = "sylph"
+path = "src/main.rs"
+
 [dependencies]
 fuzzy-matcher = "*"
 neovim-lib = "*"
@@ -13,6 +22,9 @@ sublime_fuzzy = "*"
 structopt = "*"
 serde_json = "*"
 serde = { version = "*", features = ["derive"] }
+
+[build-dependencies]
+cbindgen = "*"
 
 [profile.release]
 debug = true

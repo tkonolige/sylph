@@ -1,165 +1,31 @@
 #![feature(try_blocks)]
 
 extern crate anyhow;
-extern crate fuzzy_matcher;
-extern crate itertools;
 extern crate neovim_lib;
-extern crate serde;
 extern crate serde_json;
 extern crate structopt;
-extern crate sublime_fuzzy;
 
 use anyhow::{anyhow, Result};
-use fuzzy_matcher::FuzzyMatcher;
 use neovim_lib::{Neovim, RequestHandler, Session, Value};
 use serde::Deserialize;
-use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use structopt::StructOpt;
+use sylph::{lookup, Line, Match, Matcher};
 
-fn lookup<'a>(val: &'a Value, key: &str) -> Result<&'a Value> {
-    let map: &Vec<(Value, Value)> =
-        val.as_map()
-            .ok_or(anyhow!("{} is not a map. Cannot lookup key {}.", val, key))?;
-    map.iter()
-        .find(|x| x.0.as_str().map_or(false, |y| y == key))
-        .ok_or(anyhow!(
-            "Key {} not found in map. Possible keys: {}",
-            key,
-            map.iter()
-                .map(|x| format!("{}", x.0))
-                .collect::<Vec<_>>()
-                .join(",")
-        ))
-        .map(|x| &x.1)
-}
-
-#[derive(Deserialize)]
-struct Line {
-    path: String,
-    name: String,
-}
-
-impl Line {
-    fn from_value(val: &Value) -> Result<Self> {
-        let path = lookup(val, "path")?
-            .as_str()
-            .ok_or(anyhow!("Key path is not a string."))?;
-        let name = lookup(val, "name")?
-            .as_str()
-            .ok_or(anyhow!("Key name is not a string."))?;
-        Ok(Line {
-            path: path.to_string(),
-            name: name.to_string(),
-        })
-    }
-}
-
-#[derive(Debug)]
-struct Match {
-    path: String,
-    name: String,
-    score: f64,
-}
-
-impl Match {
-    fn to_value(self) -> Value {
-        Value::Map(vec![
-            (Value::from("path"), Value::from(self.path)),
-            (Value::from("name"), Value::from(self.name)),
-            (Value::from("score"), Value::from(self.score)),
-        ])
-    }
-}
-
-fn best_matches(
-    query: &str,
-    context: &str,
-    frequency: &FrequencyCounter,
-    num_matches: u64,
-    lines: Vec<Line>,
-) -> Result<Vec<Match>> {
-    let matcher = fuzzy_matcher::skim::SkimMatcherV2::default()
-        .use_cache(true)
-        .smart_case();
-    let mtchs = lines
-        .into_iter()
-        .filter_map(|line| {
-            let frequency_score = frequency.score(context);
-            let ctx_score = if context.len() > 0 {
-                matcher.fuzzy_match(&line.name, context).unwrap_or(0) as f64
-                    / line.name.len() as f64
-            } else {
-                0.
-            };
-            let query_score = if query.len() > 0 {
-                matcher.fuzzy_match(&line.name, query).unwrap_or(0) as f64 / line.name.len() as f64
-            } else {
-                0.
-            };
-            Some(Match {
-                path: line.path,
-                name: line.name,
-                score: frequency_score + ctx_score + query_score,
-            })
-        })
-        .fold(Vec::new(), |mut entries, mtch| {
-            if entries.len() < num_matches as usize {
-                entries.push(mtch);
-                entries
-            } else {
-                let pos = entries.iter().position(|x| x.score < mtch.score);
-                match pos {
-                    Some(idx) => entries[idx] = mtch,
-                    None => (),
-                }
-                entries
-            }
-        });
-    let short_list = mtchs;
-    Ok(short_list
-        .into_iter()
-        .take(num_matches as usize)
-        .collect::<Vec<_>>())
-}
-
-struct FrequencyCounter {
-    counts: HashMap<String, isize>,
-    total: isize,
-}
-
-impl FrequencyCounter {
-    fn new() -> Self {
-        FrequencyCounter {
-            counts: HashMap::new(),
-            total: 0,
-        }
-    }
-
-    fn update(&mut self, entry: &str) {
-        *self.counts.entry(entry.to_string()).or_insert(0) += 1;
-        self.total += 1;
-    }
-
-    fn score(&self, entry: &str) -> f64 {
-        if self.total == 0 {
-            0.
-        } else {
-            *self.counts.get(entry).unwrap_or(&0) as f64 / self.total as f64
-        }
-    }
+fn to_value(m: Match) -> Value {
+    Value::Map(vec![(Value::from("index"), Value::from(m.index))])
 }
 
 struct EventHandler {
-    frequency: FrequencyCounter,
+    matcher: Matcher,
 }
 
 impl EventHandler {
     fn new() -> Self {
         EventHandler {
-            frequency: FrequencyCounter::new(),
+            matcher: Matcher::new(),
         }
     }
 }
@@ -193,18 +59,19 @@ impl RequestHandler for EventHandler {
                             .map(Line::from_value),
                         |iter| iter.collect::<Vec<_>>(),
                     )?;
-                    let matches =
-                        best_matches(query, context, &self.frequency, num_matches, lines)?;
+                    let matches = self
+                        .matcher
+                        .best_matches(query, context, num_matches, &lines)?;
                     Value::from(
                         matches
                             .into_iter()
-                            .map(Match::to_value)
+                            .map(|m| to_value(m))
                             .collect::<Vec<Value>>(),
                     )
                 }
                 "selected" => {
                     let selected = Line::from_value(&args[0])?;
-                    self.frequency.update(&selected.name);
+                    self.matcher.update(&selected.name);
                     Value::from(true)
                 }
                 f => Err(anyhow!("No such function {}.", f))?,
@@ -222,10 +89,11 @@ struct Opts {
 }
 
 #[derive(Deserialize)]
-struct Query {
+struct Query<'a> {
     query: String,
     launched_from: String,
-    lines: Vec<Line>,
+    #[serde(borrow)]
+    lines: Vec<Line<'a>>,
 }
 
 fn main() {
@@ -242,15 +110,10 @@ fn main() {
                     &l[..]
                 };
                 let json: Query = serde_json::from_str(sl).unwrap();
-                let matches = best_matches(
-                    &json.query,
-                    &json.launched_from,
-                    &FrequencyCounter::new(),
-                    10,
-                    json.lines,
-                )
-                .unwrap();
-                println!("{:?}", matches);
+                let matches = Matcher::new()
+                    .best_matches(&json.query, &json.launched_from, 10, &json.lines)
+                    .unwrap();
+                println!("query: {}\n{:#?}", json.query, matches);
             }
         }
         None => {

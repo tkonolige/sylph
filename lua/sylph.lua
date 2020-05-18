@@ -172,6 +172,11 @@ function sylph:init(provider_name, filter_name)
       -- TODO: move to config
       local num_lines = math.min(10, #lines)
       local formatted = map(function(x) return x.name end, {unpack(lines, 1, num_lines)})
+      for i,x in ipairs(formatted) do
+        if type(x) ~= "string" then
+          error(string.format("Line %d in filter lines is not a string. Actual value: %s",i,vim.inspect(x)))
+        end
+      end
       vim.schedule(function()
         vim.api.nvim_buf_set_lines(self.buf, 1, -1, false, formatted)
         vim.api.nvim_win_set_height(self.win, num_lines+1)
@@ -329,6 +334,43 @@ sylph:register_filter("identity", {handler=function(window, data, query, callbac
 local function rust_filter()
   local plugin_dir = vim.api.nvim_eval("expand('<sfile>:p:h:h')")
   local exe = plugin_dir.."/rust/target/release/sylph"
+  local lib_path = plugin_dir.."/rust/target/release/libsylph.dylib"
+  local header = plugin_dir.."/rust/target/bindings.h"
+
+  local ffi = require("ffi")
+  local lib = ffi.load(lib_path)
+  local f = io.open(header)
+  ffi.cdef(f:read("*a"))
+
+  local matcher = lib.new_matcher()
+  local filter = {}
+  function filter.handler(window, lines, query, callback)
+    local matches = ffi.new("Match[?]", 10)
+    local lines_ = ffi.new("RawLine[?]", #lines)
+    -- C structs are zero-indexed
+    for i=0,(#lines-1) do
+      lines_[i].name = lines[i+1].name
+      lines_[i].path = lines[i+1].path
+    end
+    local num_results = ffi.typeof("uint64_t[1]")(0)
+    local err = lib.best_matches_c(matcher, query, window.launched_from_name, 10, lines_, #lines, matches, num_results)
+    if err == 0 then
+      local matched_lines = {}
+      for i=1,tonumber(num_results[0]) do
+        matched_lines[i] = lines[tonumber(matches[i-1].index+1)]
+      end
+      callback(matched_lines)
+    end
+  end
+  function filter.on_selected(line)
+    lib.update_matcher(matcher,line.path)
+  end
+  return filter
+end
+
+local function rust_filter_rpc()
+  local plugin_dir = vim.api.nvim_eval("expand('<sfile>:p:h:h')")
+  local exe = plugin_dir.."/rust/target/release/sylph"
   local function on_err(err, lines)
     vim.schedule(function()
       vim.api.nvim_err_writeln(string.format("Sylph: error in rust filter: %s", vim.inspect(lines)))
@@ -357,13 +399,23 @@ local function rust_filter()
                             , lines = data
                             , context = window.launched_from_name
                             , num_matches = 10
-                          }, callback)
+                          }, function(resp)
+                            local ls = {}
+                            for i,x in ipairs(resp) do
+                              ls[i] = data[x.index + 1]
+                            end
+                            callback(ls)
+                            end)
   end
   function filter.on_selected(line)
     job:rpcrequest("selected", line, nil)
   end
   return filter
 end
+-- local rfilter = rust_filter_rpc()
+-- sylph:register_filter("rust", {handler = rfilter.handler, on_selected = rfilter.on_selected})
+
 local rfilter = rust_filter()
 sylph:register_filter("rust", {handler = rfilter.handler, on_selected = rfilter.on_selected})
 
+vim.api.nvim_command("doautocmd <nomodeline> User SylphStarted")
