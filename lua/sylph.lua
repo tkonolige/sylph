@@ -129,8 +129,10 @@ function sylph:init(provider_name, filter_name)
     if not self.provider.run_on_input then
       self.running_proc = self.provider.handler(self, self.query,
       function(lines)
-        self.stored_lines = lines
-        self.filter.handler(self, lines, self.query, function(lines) self:draw(lines) end)
+        if lines ~= nil then
+          self.stored_lines = lines
+          self.filter.handler(self, lines, self.query, function(lines) self:draw(lines) end)
+        end
       end)
     end
   end
@@ -140,28 +142,41 @@ function sylph:init(provider_name, filter_name)
     if firstline == 0 then
       self.query = vim.api.nvim_buf_get_lines(self.buf, 0, 1, false)[1]
       if self.provider.run_on_input then
-        self.running_proc = self.provider.handler(self, self.query,
+        if self.stored_lines ~= nil then
+          self.running_proc = self.provider.handler(self, self.query,
           function(lines)
             self.filter.handler(self, lines, self.query, function(lines) self:draw(lines) end)
           end)
+        end
       else
-        self.filter.handler(self, self.stored_lines, self.query, function(lines) self:draw(lines) end)
+        if self.stored_lines ~= nil then
+          self.filter.handler(self, self.stored_lines, self.query, function(lines) self:draw(lines) end)
+        end
       end
     end
   end
 
   function window:write_selected(selected)
-    if output_file ~= nil then
-      local f = io.open(output_file, "a")
-      f:write(json.encode({lines=self.stored_lines,
-                           launched_from=self.launched_from_name,
-                           selected=selected,
-                           provider=self.provider.name,
-                           filter=self.filter.name,
-                           query=self.query
-                          }))
-      f:write("\n")
-      f:close()
+    -- TODO: run in background thread
+    if output_file ~= nil and #self.stored_lines < 1000 then
+      vim.loop.fs_open(output_file, "a", 438, function(err, f)
+        if err then
+          print("Could not open output file for writing")
+          return
+        end
+        vim.loop.fs_write(f,
+          json.encode({lines=self.stored_lines,
+          launched_from=self.launched_from_name,
+          selected=selected,
+          provider=self.provider.name,
+          filter=self.filter.name,
+          query=self.query
+          }),
+          -1 -- use existing file offset
+        )
+        vim.loop.fs_write(f, "\n", -1)
+        vim.loop.fs_close(f)
+      end)
     end
   end
 
@@ -362,6 +377,7 @@ local function rust_filter()
       callback(matched_lines)
     end
   end
+
   function filter.on_selected(line)
     lib.update_matcher(matcher,line.path)
   end
