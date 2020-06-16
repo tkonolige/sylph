@@ -124,8 +124,10 @@ impl Matcher {
             .into_iter()
             .enumerate()
             .filter_map(|(i, line)| {
-                let frequency_score = self.frequency.score(context);
-                let ctx_score = (query.len() as f64 * -1.).exp()
+                let frequency_score = self.frequency.score(line.name);
+                // Context score decays as the user input gets longer. We want good matches with no
+                // input, it matters less when the user has been explicit about what they want.
+                let context_score = (query.len() as f64 * -0.5).exp()
                     * if context.len() > 0 {
                         matcher.fuzzy_match(&line.name, context).unwrap_or(0) as f64
                             / line.name.len() as f64
@@ -140,8 +142,8 @@ impl Matcher {
                 };
                 Some(Match {
                     index: i,
-                    score: frequency_score + ctx_score + query_score,
-                    context_score: ctx_score,
+                    score: frequency_score + context_score + query_score,
+                    context_score,
                     frequency_score,
                     query_score,
                 })
@@ -159,6 +161,7 @@ impl Matcher {
                     entries
                 }
             });
+        // TODO: only get top n entries
         mtchs.sort_unstable_by(|x, y| {
             x.score
                 .partial_cmp(&y.score)
