@@ -11,6 +11,7 @@ use serde::Deserialize;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
+use std::time::{Instant, Duration};
 use structopt::StructOpt;
 use sylph::{lookup, Line, Match, Matcher};
 
@@ -94,6 +95,8 @@ struct Query<'a> {
     launched_from: String,
     #[serde(borrow)]
     lines: Vec<Line<'a>>,
+    #[serde(borrow)]
+    selected: Line<'a>,
 }
 
 fn main() {
@@ -102,6 +105,10 @@ fn main() {
         Some(path) => {
             let file = File::open(path).unwrap();
             let reader = BufReader::new(file);
+
+            let mut total_score = 0.;
+            let mut count = 0;
+            let mut total_time = Duration::from_secs(0);
             for line in reader.lines() {
                 let l = line.unwrap();
                 let sl = if &l[l.len() - 1..] == "\n" {
@@ -109,12 +116,49 @@ fn main() {
                 } else {
                     &l[..]
                 };
-                let json: Query = serde_json::from_str(sl).unwrap();
-                let matches = Matcher::new()
-                    .best_matches(&json.query, &json.launched_from, 10, &json.lines)
-                    .unwrap();
-                println!("query: {}\n{:#?}", json.query, matches);
+                match serde_json::from_str::<Query>(sl) {
+                    Err(err) => eprintln!("{:?}", err),
+                    Ok(json) => {
+                        let start = Instant::now();
+                        let matches = Matcher::new()
+                            .best_matches(&json.query, &json.launched_from, 10, &json.lines)
+                            .unwrap();
+                        let elapsed = Instant::now() - start;
+                        let match_position = matches
+                            .iter()
+                            .position(|m| json.lines[m.index].name == json.selected.name);
+                        total_score += match_position.map_or(0., |x| 0.5 * (x as f64 * -0.2).exp() + 0.5);
+                        count += 1;
+                        total_time += elapsed;
+
+                        println!("query {} from {} ({} lines)", json.query, json.launched_from, json.lines.len());
+                        println!(
+                            "  {:>9} {:>9} {:>9} {:>9}",
+                            "total", "context", "query", "frequency"
+                        );
+                        for m in matches {
+                            println!(
+                                "  {:>9.3} {:>9.3} {:>9.3} {:>9.3} {}",
+                                m.score,
+                                m.context_score,
+                                m.query_score,
+                                m.frequency_score,
+                                json.lines[m.index].path
+                            );
+                        }
+                        println!(
+                            "  correct match {} at {} in {:?} ({:?} per line)",
+                            json.selected.name,
+                            match_position.map_or(-1, |x| x as isize),
+                            elapsed,
+                            elapsed.div_f64(json.lines.len() as f64),
+                        );
+                    }
+                }
             }
+
+            println!("\ntotal score: {:.3}/{}", total_score, count);
+            println!("total time: {:?}", total_time);
         }
         None => {
             let session = Session::new_parent().unwrap();
