@@ -21,6 +21,7 @@ itertools = "*"
 sublime_fuzzy = "*"
 structopt = "*"
 serde_json = "*"
+sled = "*"
 serde = { version = "*", features = ["derive"] }
 
 [build-dependencies]
@@ -29,4 +30,4 @@ cbindgen = "*"
 [profile.release]
 debug = true
 # codegen-units = 1
-# lto = true
+lto = true

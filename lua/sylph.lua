@@ -357,7 +357,14 @@ local function rust_filter()
   local f = io.open(header)
   ffi.cdef(f:read("*a"))
 
-  local matcher = lib.new_matcher()
+  -- create matcher object
+  local matcher_p = ffi.new("struct Matcher*[1]")
+  local err = lib.new_matcher(matcher_p)
+  if err ~= nil then
+    print(ffi.string(err))
+    return
+  end
+  local matcher = matcher_p[0]
   local filter = {}
   function filter.handler(window, lines, query, callback)
     local matches = ffi.new("Match[?]", 10)
@@ -369,12 +376,14 @@ local function rust_filter()
     end
     local num_results = ffi.typeof("uint64_t[1]")(0)
     local err = lib.best_matches_c(matcher, query, window.launched_from_name, 10, lines_, #lines, matches, num_results)
-    if err == 0 then
+    if err == nil then
       local matched_lines = {}
       for i=1,tonumber(num_results[0]) do
         matched_lines[i] = lines[tonumber(matches[i-1].index+1)]
       end
       callback(matched_lines)
+    else
+      print(err)
     end
   end
 

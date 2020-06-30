@@ -4,6 +4,7 @@ extern crate anyhow;
 extern crate fuzzy_matcher;
 extern crate itertools;
 extern crate serde;
+extern crate sled;
 extern crate sublime_fuzzy;
 
 use anyhow::{anyhow, Context, Result};
@@ -12,8 +13,9 @@ use fuzzy_matcher::FuzzyMatcher;
 use itertools::process_results;
 use neovim_lib::Value;
 use serde::Deserialize;
-use std::collections::HashMap;
-use std::ffi::CStr;
+use sled::{Transactional, Tree};
+use std::convert::TryInto;
+use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 
 pub fn lookup<'a>(val: &'a Value, key: &str) -> Result<&'a Value> {
@@ -74,8 +76,31 @@ pub struct Matcher {
 }
 
 #[no_mangle]
-pub extern "C" fn new_matcher() -> *mut Matcher {
-    Box::into_raw(Box::new(Matcher::new()))
+pub extern "C" fn free_string(s: *mut c_char) {
+    unsafe { CString::from_raw(s) };
+}
+
+fn return_c_error<A>(r: &Result<A>) -> *const c_char {
+    match r {
+        Ok(_) => {
+            std::ptr::null()
+        }
+        Err(err) => CString::new(format!("{}", err)).unwrap().into_raw(),
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn new_matcher(ptr: *mut *mut Matcher) -> *const c_char {
+    let r = match Matcher::new() {
+        Ok(m) => {
+            unsafe {
+                *ptr = Box::into_raw(Box::new(m));
+            }
+            Ok(())
+        }
+        Err(err) => Err(err),
+    };
+    return_c_error(&r)
 }
 
 #[no_mangle]
@@ -85,23 +110,24 @@ pub extern "C" fn free_matcher(matcher: *mut Matcher) {
 }
 
 #[no_mangle]
-pub extern "C" fn update_matcher(matcher: *mut Matcher, path: *const c_char) {
-    unsafe {
-        let _ = matcher
+pub extern "C" fn update_matcher(matcher: *mut Matcher, path: *const c_char) -> *const c_char {
+    let r = unsafe {
+        matcher
             .as_mut()
-            .ok_or(anyhow!("Invlid matcher"))
-            .and_then(|m| Ok(m.update(CStr::from_ptr(path).to_str()?)));
-    }
+            .ok_or(anyhow!("Invalid matcher"))
+            .and_then(|m| Ok(m.update(CStr::from_ptr(path).to_str()?)))
+    };
+    return_c_error(&r)
 }
 
 impl Matcher {
-    pub fn new() -> Self {
-        Matcher {
-            frequency: FrequencyCounter::new(),
-        }
+    pub fn new() -> Result<Self> {
+        Ok(Matcher {
+            frequency: FrequencyCounter::new()?,
+        })
     }
 
-    pub fn update(&mut self, entry: &str) {
+    pub fn update(&mut self, entry: &str) -> Result<()> {
         self.frequency.update(entry)
     }
 
@@ -118,13 +144,14 @@ impl Matcher {
             .score_config(SkimScoreConfig {
                 gap_start: -8,
                 gap_extension: -3,
+                penalty_case_mismatch: 0,
                 ..SkimScoreConfig::default()
             });
         let mut mtchs = lines
             .into_iter()
             .enumerate()
             .filter_map(|(i, line)| {
-                let frequency_score = self.frequency.score(line.name);
+                let frequency_score = self.frequency.score(line.name).unwrap();
                 // Context score decays as the user input gets longer. We want good matches with no
                 // input, it matters less when the user has been explicit about what they want.
                 let context_score = (query.len() as f64 * -0.5).exp()
@@ -185,62 +212,52 @@ pub extern "C" fn best_matches_c(
     num_lines: u64,
     result_ptr: *mut Match,
     num_results: *mut u64,
-) -> i64 {
-    let res = std::panic::catch_unwind(|| {
-        let mtchs: Result<Vec<Match>> = try {
-            // TODO: avoid allocating a vector?
-            let lines = unsafe {
-                process_results(
-                    std::slice::from_raw_parts(lines_ptr, num_lines as usize)
-                        .into_iter()
-                        .map(|l| -> Result<Line> {
-                            if l.name.is_null() {
-                                Err(anyhow!("Name is null"))?
-                            };
-                            if l.path.is_null() {
-                                Err(anyhow!("Path is null"))?
-                            };
-                            Ok(Line {
-                                name: CStr::from_ptr(l.name)
-                                    .to_str()
-                                    .context("Invalid string for name")?,
-                                path: CStr::from_ptr(l.path)
-                                    .to_str()
-                                    .context("Invalid string for path")?,
-                            })
-                        }),
-                    |itr| itr.collect::<Vec<_>>(),
-                )?
-            };
-            let q = unsafe { CStr::from_ptr(query).to_str()? };
-            let c = unsafe { CStr::from_ptr(context).to_str()? };
-
-            unsafe {
-                matcher.as_ref().context("invalid pointer")?.best_matches(
-                    q,
-                    c,
-                    num_matches,
-                    lines.as_ref(),
-                )?
-            }
+) -> *const c_char {
+    let res: Result<()> = try {
+        // TODO: avoid allocating a vector?
+        let lines = unsafe {
+            process_results(
+                std::slice::from_raw_parts(lines_ptr, num_lines as usize)
+                    .into_iter()
+                    .map(|l| -> Result<Line> {
+                        if l.name.is_null() {
+                            Err(anyhow!("Name is null"))?
+                        };
+                        if l.path.is_null() {
+                            Err(anyhow!("Path is null"))?
+                        };
+                        Ok(Line {
+                            name: CStr::from_ptr(l.name)
+                                .to_str()
+                                .context("Invalid string for name")?,
+                            path: CStr::from_ptr(l.path)
+                                .to_str()
+                                .context("Invalid string for path")?,
+                        })
+                    }),
+                |itr| itr.collect::<Vec<_>>(),
+            )?
         };
-        match mtchs {
-            Ok(r) => {
-                let result =
-                    unsafe { std::slice::from_raw_parts_mut(result_ptr, num_matches as usize) };
-                unsafe { *num_results = r.len() as u64 };
-                for i in 0..r.len() {
-                    result[i] = r[i].clone()
-                }
-                0
-            }
-            Err(_) => 1,
+        let q = unsafe { CStr::from_ptr(query).to_str()? };
+        let c = unsafe { CStr::from_ptr(context).to_str()? };
+
+        let mtchs = unsafe {
+            matcher.as_ref().context("invalid pointer")?.best_matches(
+                q,
+                c,
+                num_matches,
+                lines.as_ref(),
+            )?
+        };
+        // copy matches into result vector
+        let result = unsafe { std::slice::from_raw_parts_mut(result_ptr, num_matches as usize) };
+        unsafe { *num_results = mtchs.len() as u64 };
+        for i in 0..mtchs.len() {
+            result[i] = mtchs[i].clone()
         }
-    });
-    match res {
-        Ok(r) => r,
-        Err(_) => 1,
-    }
+        ()
+    };
+    return_c_error(&res)
 }
 
 /// FrequencyCounter measures freceny---a combination of frequency and recency.
@@ -248,27 +265,48 @@ pub extern "C" fn best_matches_c(
 /// current time. Thus the total score for an entry is e^-x * (e^t1 + e^t2 + e^t3 + ...). We can
 /// store e^t1 + e^t2 + e^t3 + ... as a single number. Updates can just be added to this number.
 struct FrequencyCounter {
-    counts: HashMap<String, f64>,
-    clock: usize,
+    counts: Tree,
+    clock: Tree,
 }
 
 impl FrequencyCounter {
-    pub fn new() -> Self {
-        FrequencyCounter {
-            counts: HashMap::new(),
-            clock: 0,
-        }
+    pub fn new() -> Result<Self> {
+        let db = sled::open("/Users/tristan/.cache/sylph/frequency.db")?;
+        Ok(FrequencyCounter {
+            counts: db.open_tree(b"counts")?,
+            clock: db.open_tree(b"clock")?,
+        })
     }
 
-    pub fn update(&mut self, entry: &str) {
-        self.clock += 1;
-        *self.counts.entry(entry.to_string()).or_insert(0.) += (self.clock as f64).exp();
+    pub fn update(&mut self, entry: &str) -> Result<()> {
+        (&self.clock, &self.counts)
+            .transaction(|(clock, counts)| {
+                let c = clock
+                    .get(b"clock")?
+                    .map_or(0, |x| u64::from_ne_bytes(x.as_ref().try_into().unwrap()))
+                    + 1;
+                let new_count = counts
+                    .get(entry)?
+                    .map_or(0., |x| f64::from_ne_bytes(x.as_ref().try_into().unwrap()))
+                    + (c as f64).exp();
+                counts.insert(entry, &new_count.to_ne_bytes())?;
+                clock.insert(b"clock", &c.to_ne_bytes())?;
+                Ok(())
+            })
+            .unwrap();
+        Ok(())
     }
 
-    pub fn score(&self, entry: &str) -> f64 {
-        let c = self.clock as f64;
-        (-c).exp() * *self.counts.get(entry).unwrap_or(&0.) /
+    pub fn score(&self, entry: &str) -> Result<f64> {
+        let c = self
+            .clock
+            .get(b"clock")?
+            .map_or(0, |x| u64::from_ne_bytes(x.as_ref().try_into().unwrap()))
+            as f64;
+        Ok(
+            (-c).exp() * self.counts.get(entry)?.map_or(0., |x| f64::from_ne_bytes(x.as_ref().try_into().unwrap())) /
             // This is the maximum possible score: e^-x * (e^1 + e^2 + e^3 + ...)
-            ((-c).exp() * ((c + 1.).exp() - 1.) / (std::f64::consts::E - 1.))
+            ((-c).exp() * ((c + 1.).exp() - 1.) / (std::f64::consts::E - 1.)),
+        )
     }
 }

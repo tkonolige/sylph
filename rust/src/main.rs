@@ -11,7 +11,7 @@ use serde::Deserialize;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
-use std::time::{Instant, Duration};
+use std::time::{Duration, Instant};
 use structopt::StructOpt;
 use sylph::{lookup, Line, Match, Matcher};
 
@@ -24,10 +24,10 @@ struct EventHandler {
 }
 
 impl EventHandler {
-    fn new() -> Self {
-        EventHandler {
-            matcher: Matcher::new(),
-        }
+    fn new() -> Result<Self> {
+        Ok(EventHandler {
+            matcher: Matcher::new()?,
+        })
     }
 }
 
@@ -72,7 +72,7 @@ impl RequestHandler for EventHandler {
                 }
                 "selected" => {
                     let selected = Line::from_value(&args[0])?;
-                    self.matcher.update(&selected.name);
+                    self.matcher.update(&selected.name)?;
                     Value::from(true)
                 }
                 f => Err(anyhow!("No such function {}.", f))?,
@@ -99,7 +99,7 @@ struct Query<'a> {
     selected: Line<'a>,
 }
 
-fn main() {
+fn main() -> Result<()> {
     let opt = Opts::from_args();
     match opt.test_file {
         Some(path) => {
@@ -120,18 +120,24 @@ fn main() {
                     Err(err) => eprintln!("{:?}", err),
                     Ok(json) => {
                         let start = Instant::now();
-                        let matches = Matcher::new()
+                        let matches = Matcher::new()?
                             .best_matches(&json.query, &json.launched_from, 10, &json.lines)
                             .unwrap();
                         let elapsed = Instant::now() - start;
                         let match_position = matches
                             .iter()
                             .position(|m| json.lines[m.index].name == json.selected.name);
-                        total_score += match_position.map_or(0., |x| 0.5 * (x as f64 * -0.2).exp() + 0.5);
+                        total_score +=
+                            match_position.map_or(0., |x| 0.5 * (x as f64 * -0.2).exp() + 0.5);
                         count += 1;
                         total_time += elapsed;
 
-                        println!("query {} from {} ({} lines)", json.query, json.launched_from, json.lines.len());
+                        println!(
+                            "query {} from {} ({} lines)",
+                            json.query,
+                            json.launched_from,
+                            json.lines.len()
+                        );
                         println!(
                             "  {:>9} {:>9} {:>9} {:>9}",
                             "total", "context", "query", "frequency"
@@ -164,9 +170,10 @@ fn main() {
             let session = Session::new_parent().unwrap();
             let mut nvim = Neovim::new(session);
 
-            let handler = EventHandler::new();
+            let handler = EventHandler::new()?;
             let receiver = nvim.session.start_event_loop_channel_handler(handler);
             for _ in receiver {}
         }
-    }
+    };
+    Ok(())
 }
