@@ -68,6 +68,15 @@ local function keys(tbl)
   return ks
 end
 
+local function print_err(fmt, ...)
+  vim.schedule(function()
+    err_msg = (arg == nil) and fmt or string.format(fmt, unpack(arg))
+    -- Close window first so error message is displayed afterwards
+    sylph:close_window()
+    vim.api.nvim_err_writeln(string.format("Sylph error: %s", err_msg))
+  end)
+end
+
 --------------------------------
 -- Window creation and handlers
 --------------------------------
@@ -78,7 +87,7 @@ function sylph:init(provider_name, filter_name)
   vim.api.nvim_command("stopinsert!")
   local provider = providers[provider_name]
   if provider == nil then
-    vim.api.nvim_err_writeln(string.format("sylph: Error: provider %s not found. Available providers are %s", name, vim.inspect(keys(providers))))
+    print_err("sylph: Error: provider %s not found. Available providers are %s", name, vim.inspect(keys(providers)))
     return
   end
   -- Use rust as the default filter
@@ -87,7 +96,7 @@ function sylph:init(provider_name, filter_name)
   end
   local filter = filters[filter_name]
   if filter == nil then
-    vim.api.nvim_err_writeln(string.format("sylph: Error: filter %s not found. Available filters are %s", name, vim.inspect(keys(filters))))
+    print_err("sylph: Error: filter %s not found. Available filters are %s", name, vim.inspect(keys(filters)))
     return
   end
 
@@ -124,6 +133,9 @@ function sylph:init(provider_name, filter_name)
 
     -- automatically close window when we loose focus
     vim.api.nvim_command("au WinLeave <buffer> :lua sylph:close_window()")
+    -- Leave the user in normal mode when the window closes. Its confusing if
+    -- the user ends up in insert mode
+    vim.api.nvim_command("au WinLeave <buffer> stopi")
 
     -- run initial provider
     if not self.provider.run_on_input then
@@ -161,7 +173,7 @@ function sylph:init(provider_name, filter_name)
     if output_file ~= nil and #self.stored_lines < 1000 then
       vim.loop.fs_open(output_file, "a", 438, function(err, f)
         if err then
-          print("Could not open output file for writing")
+          print_err("Could not open output file for writing")
           return
         end
         vim.loop.fs_write(f,
@@ -226,27 +238,27 @@ function sylph:init(provider_name, filter_name)
       if buf ~= -1 then
         vim.schedule(function()
           vim.api.nvim_command(":b " .. buf)
-          vim.api.nvim_command("stopinsert!")
         end)
       else
         vim.schedule(function()
           vim.api.nvim_command(":e " .. path)
-          vim.api.nvim_command("stopinsert!")
         end)
       end
     end
   end
 
   function window:close()
-    vim.api.nvim_command("bw! "..self.buf)
-    window = nil
+      vim.api.nvim_command("bw! "..self.buf)
+      window = nil
   end
 
   window:create()
 end
 
 function sylph:close_window()
-  window:close()
+  if window ~= nil then
+    window:close()
+  end
 end
 
 function sylph:enter()
@@ -259,7 +271,7 @@ end
 
 function sylph:register_provider(name, initializer)
   if providers[name] ~= nil then
-    vim.api.nvim_err_writeln(string.format("sylph: Error: provider with name %s already exists", name))
+    print_err("sylph: Error: provider with name %s already exists", name)
   else
     providers[name] = initializer
     providers[name].name = name
@@ -268,7 +280,7 @@ end
 
 function sylph:register_filter(name, initializer)
   if filters[name] ~= nil then
-    vim.api.nvim_err_writeln(string.format("sylph: Error: filter with name %s already exists", name))
+    print_err("sylph: Error: filter with name %s already exists", name)
   else
     filters[name] = initializer
     filters[name].name = name
@@ -293,8 +305,8 @@ function sylph:process(process_name, args, postprocess)
 
     function onreaderr(err, chunk)
       if chunk then
-        vim.schedule_wrap(function() vim.api.nvim_err_writeln(string.format("sylph: Error while running command: %s", chunk)) end)
-        assert(not err, err)
+        print_err("sylph: Error while running command: %s", chunk)
+        return
       end
     end
 
@@ -311,7 +323,7 @@ function sylph:process(process_name, args, postprocess)
     args_[#args_+1] = query
     handle, pid = uv.spawn(process_name, {args=args_, stdio={stdin, stdout, stderr}}, onexit)
     if pid == nil then
-      vim.schedule_wrap(function() vim.api.nvim_err_writeln(string.format("sylph. Error running command %s: %s", args_, handle)) end)
+      print_err("sylph. Error running command %s: %s", args_, handle)
     end
     uv.read_start(stdout, onread)
     uv.read_start(stderr, onreaderr)
@@ -361,7 +373,7 @@ local function rust_filter()
   local matcher_p = ffi.new("struct Matcher*[1]")
   local err = lib.new_matcher(matcher_p)
   if err ~= nil then
-    print(ffi.string(err))
+    print_err(ffi.string(err))
     return
   end
   local matcher = matcher_p[0]
@@ -383,7 +395,7 @@ local function rust_filter()
       end
       callback(matched_lines)
     else
-      print(err)
+      print_err(ffi.string(err))
     end
   end
 
@@ -397,24 +409,20 @@ local function rust_filter_rpc()
   local plugin_dir = vim.api.nvim_eval("expand('<sfile>:p:h:h')")
   local exe = plugin_dir.."/rust/target/release/sylph"
   local function on_err(err, lines)
-    vim.schedule(function()
-      vim.api.nvim_err_writeln(string.format("Sylph: error in rust filter: %s", vim.inspect(lines)))
-    end)
+    print_err("Sylph: error in rust filter: %s", vim.inspect(lines))
   end
   local function on_exit(code, signal)
-    vim.schedule(function()
-      vim.api.nvim_err_writeln(string.format("Sylph: rust filter exited with code %s, signal %s", code, signal))
-    end)
+    print_err("Sylph: rust filter exited with code %s, signal %s", code, signal)
   end
   local job = jobstart.jobstart({exe}, {rpc=true,
                                         on_stderr=on_err,
                                         on_exit=on_exit})
   if job == -1 then
-    vim.api.nvim_err_writeln("Could not launch "..exe)
+    print_err("Could not launch "..exe)
     return
   end
   if job == 0 then
-    vim.api.nvim_err_writeln("Invalid arguments to "..exe)
+    print_err("Invalid arguments to "..exe)
     return
   end
 
@@ -441,6 +449,8 @@ end
 -- sylph:register_filter("rust", {handler = rfilter.handler, on_selected = rfilter.on_selected})
 
 local rfilter = rust_filter()
-sylph:register_filter("rust", {handler = rfilter.handler, on_selected = rfilter.on_selected})
+if rfilter ~= nil then
+  sylph:register_filter("rust", {handler = rfilter.handler, on_selected = rfilter.on_selected})
+end
 
 vim.api.nvim_command("doautocmd <nomodeline> User SylphStarted")
