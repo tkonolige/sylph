@@ -1,4 +1,4 @@
-sylph = {}
+sylph = {} -- not local so we can all into this module from viml callbacks
 
 local jobstart = require("job")
 local json = require("json")
@@ -357,54 +357,6 @@ sylph:register_provider("grep", {
 })
 sylph:register_filter("identity", {handler=function(window, data, query, callback) callback(data) end})
 
--- TODO: is RPC overhead the cause of slowness here?
-local function rust_filter()
-  local plugin_dir = vim.api.nvim_eval("expand('<sfile>:p:h:h')")
-  local exe = plugin_dir.."/rust/target/release/sylph"
-  local lib_path = plugin_dir.."/rust/target/release/libsylph.dylib"
-  local header = plugin_dir.."/rust/target/bindings.h"
-
-  local ffi = require("ffi")
-  local lib = ffi.load(lib_path)
-  local f = io.open(header)
-  ffi.cdef(f:read("*a"))
-
-  -- create matcher object
-  local matcher_p = ffi.new("struct Matcher*[1]")
-  local err = lib.new_matcher(matcher_p)
-  if err ~= nil then
-    print_err(ffi.string(err))
-    return
-  end
-  local matcher = matcher_p[0]
-  local filter = {}
-  function filter.handler(window, lines, query, callback)
-    local matches = ffi.new("Match[?]", 10)
-    local lines_ = ffi.new("RawLine[?]", #lines)
-    -- C structs are zero-indexed
-    for i=0,(#lines-1) do
-      lines_[i].name = lines[i+1].name
-      lines_[i].path = lines[i+1].path
-    end
-    local num_results = ffi.typeof("uint64_t[1]")(0)
-    local err = lib.best_matches_c(matcher, query, window.launched_from_name, 10, lines_, #lines, matches, num_results)
-    if err == nil then
-      local matched_lines = {}
-      for i=1,tonumber(num_results[0]) do
-        matched_lines[i] = lines[tonumber(matches[i-1].index+1)]
-      end
-      callback(matched_lines)
-    else
-      print_err(ffi.string(err))
-    end
-  end
-
-  function filter.on_selected(line)
-    lib.update_matcher(matcher,line.path)
-  end
-  return filter
-end
-
 local function rust_filter_rpc()
   local plugin_dir = vim.api.nvim_eval("expand('<sfile>:p:h:h')")
   local exe = plugin_dir.."/rust/target/release/sylph"
@@ -448,9 +400,11 @@ end
 -- local rfilter = rust_filter_rpc()
 -- sylph:register_filter("rust", {handler = rfilter.handler, on_selected = rfilter.on_selected})
 
-local rfilter = rust_filter()
+local rfilter = require("rustfilter")
 if rfilter ~= nil then
   sylph:register_filter("rust", {handler = rfilter.handler, on_selected = rfilter.on_selected})
 end
 
 vim.api.nvim_command("doautocmd <nomodeline> User SylphStarted")
+
+return sylph
