@@ -69,8 +69,9 @@ local function keys(tbl)
 end
 
 local function print_err(fmt, ...)
+  args = {...}
   vim.schedule(function()
-    err_msg = (arg == nil) and fmt or string.format(fmt, unpack(arg))
+    err_msg = (args == nil) and fmt or string.format(fmt, unpack(args))
     -- Close window first so error message is displayed afterwards
     sylph:close_window()
     vim.api.nvim_err_writeln(string.format("Sylph error: %s", err_msg))
@@ -154,12 +155,15 @@ function sylph:init(provider_name, filter_name)
     if firstline == 0 then
       self.query = vim.api.nvim_buf_get_lines(self.buf, 0, 1, false)[1]
       if self.provider.run_on_input then
-        if self.stored_lines ~= nil then
-          self.running_proc = self.provider.handler(self, self.query,
+        if self.running_proc ~= nil then
+          self.running_proc()
+          self.running_proc = nil
+        end
+        self.running_proc = self.provider.handler(self, self.query,
           function(lines)
+            self.stored_lines = lines
             self.filter.handler(self, lines, self.query, function(lines) self:draw(lines) end)
           end)
-        end
       else
         if self.stored_lines ~= nil then
           self.filter.handler(self, self.stored_lines, self.query, function(lines) self:draw(lines) end)
@@ -198,7 +202,7 @@ function sylph:init(provider_name, filter_name)
       self.selected = 1
       -- TODO: move to config
       local num_lines = math.min(10, #lines)
-      local formatted = map(function(x) return x.name end, {unpack(lines, 1, num_lines)})
+      local formatted = map(function(x) return x.line end, {unpack(lines, 1, num_lines)})
       for i,x in ipairs(formatted) do
         if type(x) ~= "string" then
           error(string.format("Line %d in filter lines is not a string. Actual value: %s",i,vim.inspect(x)))
@@ -312,15 +316,20 @@ function sylph:process(process_name, args, postprocess)
 
     local exited = false
     function onexit(code, signal)
-      if code > 0 then
-        -- assert(not code, string.format("sylph: Command %s exited with code %s", process_name, code))
+      -- if code > 0 and not exited then
+      --   print_err("Command %s exited with code %s", process_name, code)
+      --   return
+      -- end
+      if not exited then
+        callback(lines)
+        exited = true
       end
-      callback(lines)
-      exited = true
     end
 
     local args_ = vim.deepcopy(args)
     args_[#args_+1] = query
+    local handle
+    local pid
     handle, pid = uv.spawn(process_name, {args=args_, stdio={stdin, stdout, stderr}}, onexit)
     if pid == nil then
       print_err("sylph. Error running command %s: %s", args_, handle)
@@ -330,7 +339,9 @@ function sylph:process(process_name, args, postprocess)
 
     return function()
       if handle ~= nil and not exited then
+        exited = true
         uv.process_kill(handle, 9)
+        handle = nil
       end
     end
   end
@@ -343,7 +354,7 @@ sylph:register_provider("files", {
                             if window.launched_from_name == x then
                               return nil
                             else
-                              return {path=x, name=x}
+                              return {path=x, line=x}
                             end
                           end),
   run_on_input = false,
@@ -351,7 +362,7 @@ sylph:register_provider("files", {
 sylph:register_provider("grep", {
   handler = sylph:process("rg", {}, function(window, line)
     local path = line:gmatch("[^:]+")
-    return {path=path(), name=line}
+    return {path=path(), line=line}
   end),
   run_on_input = true
 })

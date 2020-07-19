@@ -1,7 +1,7 @@
 use serde::Deserialize;
-use sylph::{Line, Matcher, ThreadedMatcher, Progress};
-use std::io::{BufRead, BufReader};
 use std::fs::File;
+use std::io::{BufRead, BufReader};
+use sylph::{Line, Matcher, Progress, ThreadedMatcher};
 
 #[derive(Deserialize)]
 struct JSONLine {
@@ -38,14 +38,19 @@ fn incremental_same_as_batch() {
         match serde_json::from_str::<Query>(sl) {
             Err(err) => eprintln!("{:?}", err),
             Ok(json) => {
-                let mtchs_batch = matcher.best_matches(&json.query, &json.launched_from, 10, &json.lines).unwrap();
-                let mut inc_matcher = matcher.incremental_match(&json.query, &json.launched_from, 10, &json.lines);
+                let mtchs_batch = matcher
+                    .best_matches(&json.query, &json.launched_from, 10, &json.lines)
+                    .unwrap();
+                let mut inc_matcher =
+                    matcher.incremental_match(&json.query, &json.launched_from, 10, &json.lines);
                 let mut progress = inc_matcher.process(10).unwrap();
                 while progress == Progress::Working {
                     progress = inc_matcher.process(10).unwrap();
                 }
                 match progress {
-                    Progress::Done(results) => assert!(mtchs_batch == results, "{:#?} {:#?}", mtchs_batch, results),
+                    Progress::Done(results) => {
+                        assert!(mtchs_batch == results, "{:#?} {:#?}", mtchs_batch, results)
+                    }
                     _ => assert!(false),
                 }
             }

@@ -59,7 +59,8 @@ function filter.handler(window, lines, query, callback)
   local lines_ = alloc_c_array("RawLine", #lines)
   -- C structs are zero-indexed
   for i=0,(#lines-1) do
-    lines_[i] = lines[i+1]
+    lines_[i].path = lines[i+1].path
+    lines_[i].line = lines[i+1].line
   end
   local err = lib.start_matches_threaded(matcher, query, window.launched_from_name, 10, lines_, #lines)
   if err ~= nil then

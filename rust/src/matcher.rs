@@ -25,14 +25,21 @@ pub fn lookup<'a>(val: &'a Value, key: &str) -> Result<&'a Value> {
 
 pub trait Line {
     fn path(&self) -> &str;
+    fn line(&self) -> &str;
 }
 
-pub struct OwnedLine(pub String);
+pub struct OwnedLine{
+    pub path: String,
+    pub line: String,
+}
 
 impl Line for OwnedLine {
     fn path(&self) -> &str {
-        let OwnedLine(path) = self;
-        &path
+        &self.path
+    }
+
+    fn line(&self) -> &str {
+        &self.line
     }
 }
 
@@ -105,16 +112,16 @@ impl Matcher {
                     let context_score = (query.len() as f64 * -0.5).exp()
                         * if context.len() > 0 {
                             self.skim_matcher
-                                .fuzzy_match(&line.path(), context)
+                                .fuzzy_match(&line.line(), context)
                                 .unwrap_or(0) as f64
-                                / line.path().len() as f64
+                                / line.line().len() as f64
                         } else {
                             0.
                         };
-                    match self.skim_matcher.fuzzy_match(&line.path(), query) {
+                    match self.skim_matcher.fuzzy_match(&line.line(), query) {
                         Some(query_match) => {
                             let query_score = if query.len() > 0 {
-                                query_match as f64 / line.path().len() as f64
+                                query_match as f64 / line.line().len() as f64
                             } else {
                                 0.
                             };
@@ -219,7 +226,10 @@ impl<'a, 'b, 'c, L: Line> IncrementalMatcher<'a, 'b, 'c, L> {
             &self.lines[self.progressed_to..ending_progressed_to],
         )?;
         for mm in new_matches {
-            let m = Match{ index: mm.index + self.progressed_to, ..mm};
+            let m = Match {
+                index: mm.index + self.progressed_to,
+                ..mm
+            };
             // Have room for more matches
             if self.results.len() < self.num_results {
                 self.results.push(m);

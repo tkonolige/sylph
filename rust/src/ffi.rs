@@ -10,11 +10,15 @@ use super::matcher::*;
 #[derive(Debug)]
 pub struct RawLine {
     path: *const c_char,
+    line: *const c_char,
 }
 
 impl Line for RawLine {
     fn path(&self) -> &str {
         unsafe { CStr::from_ptr(self.path).to_str().unwrap() }
+    }
+    fn line(&self) -> &str {
+        unsafe { CStr::from_ptr(self.line).to_str().unwrap() }
     }
 }
 
@@ -38,6 +42,7 @@ enum Command {
         lines: Vec<OwnedLine>,
         id: usize,
     },
+    Update(String),
 }
 
 /// Object holding a matcher running in a separate thread
@@ -52,7 +57,7 @@ impl ThreadedMatcher {
         let (command_send, command_recv) = unbounded();
         let (result_send, result_recv) = unbounded::<(usize, Result<Vec<Match>>)>();
         thread::spawn(move || {
-            let matcher = match Matcher::new() {
+            let mut matcher = match Matcher::new() {
                 Ok(matcher) => matcher,
                 Err(err) => {
                     result_send.send((0, Err(err))).unwrap();
@@ -60,33 +65,34 @@ impl ThreadedMatcher {
                 }
             };
             loop {
-                let cmd = command_recv.recv().unwrap();
-                if let Command::Query {
-                    query,
-                    context,
-                    num_results,
-                    lines,
-                    id,
-                } = cmd
-                {
-                    let r: Result<()> = try {
-                        let mut inc_matcher = matcher.incremental_match(
-                            &query,
-                            &context,
-                            num_results as u64,
-                            lines.as_slice(),
-                        );
-                        let mut progress = Progress::Working;
-                        while command_recv.len() == 0 && progress == Progress::Working {
-                            progress = inc_matcher.process(100)?;
+                match command_recv.recv().unwrap() {
+                    Command::Query {
+                        query,
+                        context,
+                        num_results,
+                        lines,
+                        id,
+                    } => {
+                        let r: Result<()> = try {
+                            let mut inc_matcher = matcher.incremental_match(
+                                &query,
+                                &context,
+                                num_results as u64,
+                                lines.as_slice(),
+                            );
+                            let mut progress = Progress::Working;
+                            while command_recv.len() == 0 && progress == Progress::Working {
+                                progress = inc_matcher.process(100)?;
+                            }
+                            if let Progress::Done(results) = progress {
+                                result_send.send((id, Ok(results))).unwrap();
+                            }
+                        };
+                        if let Err(err) = r {
+                            result_send.send((id, Err(err))).unwrap();
                         }
-                        if let Progress::Done(results) = progress {
-                            result_send.send((id, Ok(results))).unwrap();
-                        }
-                    };
-                    if let Err(err) = r {
-                        result_send.send((id, Err(err))).unwrap();
                     }
+                    Command::Update(path) => matcher.update(&path).unwrap(),
                 }
             }
         });
@@ -106,7 +112,7 @@ impl ThreadedMatcher {
                 num_results,
                 lines: lines
                     .iter()
-                    .map(|l| OwnedLine(l.path().to_string()))
+                    .map(|l| OwnedLine{path: l.path().to_string(), line: l.line().to_string()})
                     .collect(),
                 id: self.command_num,
             })
@@ -124,6 +130,12 @@ impl ThreadedMatcher {
             Err(TryRecvError::Disconnected) => Some(Err(anyhow!("Processing thread has died"))),
             _ => None,
         }
+    }
+
+    fn update(&self, path: &str) {
+        self.command_ch
+            .send(Command::Update(path.to_string()))
+            .unwrap();
     }
 }
 
@@ -200,14 +212,15 @@ pub extern "C" fn update_matcher_threaded(
     matcher: *mut ThreadedMatcher,
     path: *const c_char,
 ) -> *const c_char {
-    unimplemented!()
-    // let r = unsafe {
-    //     matcher
-    //         .as_mut()
-    //         .ok_or(anyhow!("Invalid matcher"))
-    //         .and_then(|m| Ok(m.update(CStr::from_ptr(path).to_str()?)))
-    // };
-    // return_c_error(&r)
+    println!("Updating");
+    let r = unsafe {
+        matcher
+            .as_mut()
+            .ok_or(anyhow!("Invalid matcher"))
+            .and_then(|m| Ok(m.update(CStr::from_ptr(path).to_str()?)))
+    };
+    println!("done");
+    return_c_error(&r)
 }
 
 #[no_mangle]

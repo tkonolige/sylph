@@ -72,7 +72,7 @@ impl RequestHandler for EventHandler {
                 }
                 "selected" => {
                     let selected = JSONLine::from_value(&args[0])?;
-                    self.matcher.update(&selected.name)?;
+                    self.matcher.update(&selected.path)?;
                     Value::from(true)
                 }
                 f => Err(anyhow!("No such function {}.", f))?,
@@ -91,7 +91,8 @@ struct Opts {
 
 #[derive(Deserialize)]
 struct JSONLine {
-    name: String,
+    #[serde(alias = "name")]
+    line: String,
     path: String,
 }
 
@@ -105,7 +106,7 @@ impl JSONLine {
             .ok_or(anyhow!("Key name is not a string."))?;
         Ok(JSONLine {
             path: path.to_string(),
-            name: name.to_string(),
+            line: name.to_string(),
         })
     }
 }
@@ -113,6 +114,10 @@ impl JSONLine {
 impl Line for JSONLine {
     fn path(&self) -> &str {
         self.path.as_str()
+    }
+
+    fn line(&self) -> &str {
+        self.line.as_str()
     }
 }
 
@@ -151,7 +156,7 @@ fn main() -> Result<()> {
                         let elapsed = Instant::now() - start;
                         let match_position = matches
                             .iter()
-                            .position(|m| json.lines[m.index].name == json.selected.name);
+                            .position(|m| json.lines[m.index].line == json.selected.line);
                         total_score +=
                             match_position.map_or(0., |x| 0.5 * (x as f64 * -0.2).exp() + 0.5);
                         count += 1;
@@ -179,7 +184,7 @@ fn main() -> Result<()> {
                         }
                         println!(
                             "  correct match {} at {} in {:?} ({:?} per line)",
-                            json.selected.name,
+                            json.selected.line,
                             match_position.map_or(-1, |x| x as isize),
                             elapsed,
                             elapsed.div_f64(json.lines.len() as f64),
