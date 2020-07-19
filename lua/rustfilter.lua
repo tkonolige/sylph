@@ -45,36 +45,56 @@ local f = io.open(header)
 ffi.cdef(f:read("*a"))
 
 -- create matcher object
-local matcher_p = alloc_c("struct Matcher*")
-local err = lib.new_matcher(matcher_p)
+local matcher_p = alloc_c("struct ThreadedMatcher*")
+local err = lib.new_threaded_matcher(matcher_p)
 if err ~= nil then
   print_err(ffi.string(err))
 end
 local matcher = matcher_p[0]
 local filter = {}
+local timer = nil
 function filter.handler(window, lines, query, callback)
   local matches = alloc_c_array("Match", 10)
+  local num_matches = alloc_c("int64_t")
   local lines_ = alloc_c_array("RawLine", #lines)
   -- C structs are zero-indexed
   for i=0,(#lines-1) do
-    lines_[i].name = lines[i+1].name
-    lines_[i].path = lines[i+1].path
+    lines_[i] = lines[i+1]
   end
-  local num_results = alloc_c("uint64_t")
-  local err = lib.best_matches_c(matcher, query, window.launched_from_name, 10, lines_, #lines, matches, num_results)
-  if err == nil then
-    local matched_lines = {}
-    for i=1,tonumber(num_results[0]) do
-      matched_lines[i] = lines[tonumber(matches[i-1].index+1)]
-    end
-    callback(matched_lines)
-  else
+  local err = lib.start_matches_threaded(matcher, query, window.launched_from_name, 10, lines_, #lines)
+  if err ~= nil then
     print_err(ffi.string(err))
+    return
   end
+
+  local timer_callback
+  timer_callback = function()
+    if timer ~= nil then
+      timer:close()
+      timer = nil
+    end
+    num_matches[0] = 10
+    local err = lib.get_matches_threaded(matcher, matches, num_matches)
+    if err ~= nil then
+      print_err(ffi.string(err))
+      return
+    end
+    if tonumber(num_matches[0]) < 0 then
+      timer = vim.loop.new_timer()
+      timer:start(5, 0, timer_callback)
+    else
+      local matched_lines = {}
+      for i=1,tonumber(num_matches[0]) do
+        matched_lines[i] = lines[tonumber(matches[i-1].index+1)]
+      end
+      callback(matched_lines)
+    end
+  end
+  timer_callback()
 end
 
 function filter.on_selected(line)
-  lib.update_matcher(matcher,line.path)
+  lib.update_matcher_threaded(matcher,line.path)
 end
 
 return filter

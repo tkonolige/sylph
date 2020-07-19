@@ -57,7 +57,7 @@ impl RequestHandler for EventHandler {
                                 lookup(&args[0], "lines").unwrap()
                             ))?
                             .iter()
-                            .map(Line::from_value),
+                            .map(JSONLine::from_value),
                         |iter| iter.collect::<Vec<_>>(),
                     )?;
                     let matches = self
@@ -71,7 +71,7 @@ impl RequestHandler for EventHandler {
                     )
                 }
                 "selected" => {
-                    let selected = Line::from_value(&args[0])?;
+                    let selected = JSONLine::from_value(&args[0])?;
                     self.matcher.update(&selected.name)?;
                     Value::from(true)
                 }
@@ -90,13 +90,38 @@ struct Opts {
 }
 
 #[derive(Deserialize)]
-struct Query<'a> {
+struct JSONLine {
+    name: String,
+    path: String,
+}
+
+impl JSONLine {
+    pub fn from_value(val: &Value) -> Result<Self> {
+        let path = lookup(val, "path")?
+            .as_str()
+            .ok_or(anyhow!("Key path is not a string."))?;
+        let name = lookup(val, "name")?
+            .as_str()
+            .ok_or(anyhow!("Key name is not a string."))?;
+        Ok(JSONLine {
+            path: path.to_string(),
+            name: name.to_string(),
+        })
+    }
+}
+
+impl Line for JSONLine {
+    fn path(&self) -> &str {
+        self.path.as_str()
+    }
+}
+
+#[derive(Deserialize)]
+struct Query {
     query: String,
     launched_from: String,
-    #[serde(borrow)]
-    lines: Vec<Line<'a>>,
-    #[serde(borrow)]
-    selected: Line<'a>,
+    lines: Vec<JSONLine>,
+    selected: JSONLine,
 }
 
 fn main() -> Result<()> {

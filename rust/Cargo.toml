@@ -23,6 +23,8 @@ structopt = "*"
 serde_json = "*"
 rusqlite = "*"
 serde = { version = "*", features = ["derive"] }
+binary-heap-plus = "*"
+crossbeam-channel = "*"
 
 [build-dependencies]
 cbindgen = "*"
@@ -30,4 +32,4 @@ cbindgen = "*"
 [profile.release]
 debug = true
 # codegen-units = 1
-lto = true
+# lto = true
