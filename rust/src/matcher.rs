@@ -5,6 +5,7 @@ use fuzzy_matcher::FuzzyMatcher;
 use itertools::process_results;
 use neovim_lib::Value;
 use rusqlite::{Connection, OptionalExtension};
+use std::path::PathBuf;
 
 pub fn lookup<'a>(val: &'a Value, key: &str) -> Result<&'a Value> {
     let map: &Vec<(Value, Value)> =
@@ -28,7 +29,7 @@ pub trait Line {
     fn line(&self) -> &str;
 }
 
-pub struct OwnedLine{
+pub struct OwnedLine {
     pub path: String,
     pub line: String,
 }
@@ -263,7 +264,11 @@ struct FrequencyCounter {
 
 impl FrequencyCounter {
     pub fn new() -> Result<Self> {
-        let db = Connection::open("/Users/tristan/.cache/sylph/frequency.sqlite")?;
+        let db_path = std::env::var("XDG_CACHE_DIR")
+            .map(|path| PathBuf::from(path))
+            .or(std::env::var("HOME").map(|path| PathBuf::from(path).join(".cache")))?
+            .join("sylph/frequency.sqlite");
+        let db = Connection::open(db_path)?;
         db.execute_batch("
             CREATE TABLE IF NOT EXISTS clock ( id INTEGER PRIMARY KEY CHECK (id = 0), clock INTEGER NOT NULL);
             INSERT INTO clock (id, clock) SELECT 0, 0 WHERE NOT EXISTS(SELECT 1 FROM clock);

@@ -78,6 +78,8 @@ local function print_err(fmt, ...)
   end)
 end
 
+sylph.print_err = print_err
+
 --------------------------------
 -- Window creation and handlers
 --------------------------------

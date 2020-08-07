@@ -36,7 +36,14 @@ end
 -- Can't use RPC because the serialization overhead is large
 local plugin_dir = vim.api.nvim_eval("expand('<sfile>:p:h:h')")
 local exe = plugin_dir.."/rust/target/release/sylph"
-local lib_path = plugin_dir.."/rust/target/release/libsylph.dylib"
+local lib_path = plugin_dir.."/rust/target/release/libsylph.so"
+function file_exists(name)
+  local f=io.open(name,"r")
+  if f~=nil then io.close(f) return true else return false end
+end
+if not file_exists(lib_path) then
+  lib_path = plugin_dir.."/rust/target/release/libsylph.dylib"
+end
 local header = plugin_dir.."/rust/target/bindings.h"
 
 -- read rust header
@@ -48,7 +55,7 @@ ffi.cdef(f:read("*a"))
 local matcher_p = alloc_c("struct ThreadedMatcher*")
 local err = lib.new_threaded_matcher(matcher_p)
 if err ~= nil then
-  print_err(ffi.string(err))
+  sylph.print_err(ffi.string(err))
 end
 local matcher = matcher_p[0]
 local filter = {}
@@ -64,7 +71,7 @@ function filter.handler(window, lines, query, callback)
   end
   local err = lib.start_matches_threaded(matcher, query, window.launched_from_name, 10, lines_, #lines)
   if err ~= nil then
-    print_err(ffi.string(err))
+    sylph.print_err(ffi.string(err))
     return
   end
 
@@ -77,7 +84,7 @@ function filter.handler(window, lines, query, callback)
     num_matches[0] = 10
     local err = lib.get_matches_threaded(matcher, matches, num_matches)
     if err ~= nil then
-      print_err(ffi.string(err))
+      sylph.print_err(ffi.string(err))
       return
     end
     if tonumber(num_matches[0]) < 0 then
