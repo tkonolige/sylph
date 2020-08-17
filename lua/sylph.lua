@@ -1,7 +1,7 @@
 sylph = {} -- not local so we can all into this module from viml callbacks
 
-local jobstart = require("job")
 local json = require("json")
+local util = require("util")
 
 --------------------------------
 -- Globals
@@ -17,56 +17,6 @@ local filters = {}
 local window -- need to store a reference to the shown window so we can set keymaps for it
 
 local output_file = vim.api.nvim_eval("expand(\"~/.cache/nvim/sylph.log\")")
-
---------------------------------
--- Utility functions
---------------------------------
-
-local function split_lines(x)
-  lines = {}
-  if x ~= nil then
-    i = 1
-    for s in x:gmatch("[^\r\n]+") do
-      lines[i] = s
-      i = i + 1
-    end
-  end
-  return lines
-end
-
-local function map(fn, ary)
-  local out = {}
-  for _, x in ipairs(ary) do
-    out[#out+1]=fn(x)
-  end
-  return out
-end
-
-local function append(x, y)
-  for _, l in ipairs(y) do
-    x[#x+1] = l
-  end
-  return x
-end
-
-local function filter(x)
-  local y = {}
-  for _, l in ipairs(x) do
-    if l ~= nil then
-      y[#y+1] = l
-    end
-  end
-  return y
-end
-
-
-local function keys(tbl)
-  ks = {}
-  for k, _ in pairs(tbl) do
-    ks[#ks+1] = k
-  end
-  return ks
-end
 
 local function print_err(fmt, ...)
   args = {...}
@@ -204,7 +154,7 @@ function sylph:init(provider_name, filter_name)
       self.selected = 1
       -- TODO: move to config
       local num_lines = math.min(10, #lines)
-      local formatted = map(function(x) return x.line end, {unpack(lines, 1, num_lines)})
+      local formatted = util.map(function(x) return x.line end, {unpack(lines, 1, num_lines)})
       for i,x in ipairs(formatted) do
         if type(x) ~= "string" then
           error(string.format("Line %d in filter lines is not a string. Actual value: %s",i,vim.inspect(x)))
@@ -297,135 +247,10 @@ function sylph:register_filter(name, initializer)
   end
 end
 
-function sylph:process(process_name, args, postprocess)
-  return function(window, query, callback)
-    local uv = vim.loop
-    local stdout = uv.new_pipe(false)
-    local stderr = uv.new_pipe(false)
-    local stdin = uv.new_pipe(false)
-    local lines = {}
+require("rustfilter")
+require("providers")
 
-    -- TODO: buffer data until newline
-    function onread(err, chunk)
-      assert(not err, err)
-      if (chunk) then
-        append(lines, filter(map(function(x) return postprocess(window, x) end, split_lines(chunk))))
-      end
-    end
-
-    function onreaderr(err, chunk)
-      if chunk then
-        print_err("sylph: Error while running command: %s", chunk)
-        return
-      end
-    end
-
-    local exited = false
-    function onexit(code, signal)
-      -- if code > 0 and not exited then
-      --   print_err("Command %s exited with code %s", process_name, code)
-      --   return
-      -- end
-      if not exited then
-        callback(lines)
-        exited = true
-      end
-    end
-
-    local args_ = vim.deepcopy(args)
-    args_[#args_+1] = query
-    local handle
-    local pid
-    handle, pid = uv.spawn(process_name, {args=args_, stdio={stdin, stdout, stderr}}, onexit)
-    if pid == nil then
-      print_err("sylph. Error running command %s: %s", args_, handle)
-    end
-    uv.read_start(stdout, onread)
-    uv.read_start(stderr, onreaderr)
-
-    return function()
-      if handle ~= nil and not exited then
-        exited = true
-        uv.process_kill(handle, 9)
-        handle = nil
-      end
-    end
-  end
-end
-
-sylph:register_provider("files", {
-  handler = sylph:process("fd", {"-t", "f"},
-                          function(window, x)
-                            -- filter out our current file
-                            if window.launched_from_name == x then
-                              return nil
-                            else
-                              return {location={path=x}, line=x}
-                            end
-                          end),
-  run_on_input = false,
-})
-sylph:register_provider("grep", {
-  handler = sylph:process("rg", {"-n", "--column"}, function(window, line)
-    local m = line:gmatch("[^:]+")
-    local path = m()
-    local row = m()
-    local col = m()
-    local line = m()
-    return {location={path=path, row=row, col=col}, line=line}
-  end),
-  run_on_input = true
-})
-sylph:register_filter("identity", {handler=function(window, data, query, callback) callback(data) end})
-
-local function rust_filter_rpc()
-  local plugin_dir = vim.api.nvim_eval("expand('<sfile>:p:h:h')")
-  local exe = plugin_dir.."/rust/target/release/sylph"
-  local function on_err(err, lines)
-    print_err("Sylph: error in rust filter: %s", vim.inspect(lines))
-  end
-  local function on_exit(code, signal)
-    print_err("Sylph: rust filter exited with code %s, signal %s", code, signal)
-  end
-  local job = jobstart.jobstart({exe}, {rpc=true,
-                                        on_stderr=on_err,
-                                        on_exit=on_exit})
-  if job == -1 then
-    print_err("Could not launch "..exe)
-    return
-  end
-  if job == 0 then
-    print_err("Invalid arguments to "..exe)
-    return
-  end
-
-  local filter = {}
-  function filter.handler(window, data, query, callback)
-    job:rpcrequest("match", { query = query
-                            , lines = data
-                            , context = window.launched_from_name
-                            , num_matches = 10
-                          }, function(resp)
-                            local ls = {}
-                            for i,x in ipairs(resp) do
-                              ls[i] = data[x.index + 1]
-                            end
-                            callback(ls)
-                            end)
-  end
-  function filter.on_selected(line)
-    job:rpcrequest("selected", line, nil)
-  end
-  return filter
-end
--- local rfilter = rust_filter_rpc()
--- sylph:register_filter("rust", {handler = rfilter.handler, on_selected = rfilter.on_selected})
-
-local rfilter = require("rustfilter")
-if rfilter ~= nil then
-  sylph:register_filter("rust", {handler = rfilter.handler, on_selected = rfilter.on_selected})
-end
-
+-- Let the user know that sylph has been initialized
 vim.api.nvim_command("doautocmd <nomodeline> User SylphStarted")
 
 return sylph

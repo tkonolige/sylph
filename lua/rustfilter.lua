@@ -2,9 +2,8 @@ local filterer = require("filter")
 
 -- create matcher object
 local matcher = filterer.threaded_matcher()
-local filter = {}
 local timer = nil
-function filter.handler(window, lines, query, callback)
+function handler(window, lines, query, callback)
   local err = matcher:query(query, window.launched_from_name, 10, lines)
   if err ~= nil then
     sylph.print_err(ffi.string(err))
@@ -36,8 +35,8 @@ function filter.handler(window, lines, query, callback)
   timer_callback()
 end
 
-function filter.on_selected(line)
+function on_selected(line)
   matcher:update(line.location.path)
 end
 
-return filter
+sylph:register_filter("rust", {handler = handler, on_selected = on_selected})
