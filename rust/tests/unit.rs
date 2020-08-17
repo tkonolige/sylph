@@ -1,7 +1,7 @@
+use filter::{Line, Matcher, Progress, ThreadedMatcher};
 use serde::Deserialize;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
-use sylph::{Line, Matcher, Progress, ThreadedMatcher};
 
 #[derive(Deserialize)]
 struct JSONLine {

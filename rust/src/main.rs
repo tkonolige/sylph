@@ -6,6 +6,7 @@ extern crate serde_json;
 extern crate structopt;
 
 use anyhow::{anyhow, Result};
+use filter::{lookup, Line, Match, Matcher};
 use neovim_lib::{Neovim, RequestHandler, Session, Value};
 use serde::Deserialize;
 use std::fs::File;
@@ -13,7 +14,6 @@ use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 use structopt::StructOpt;
-use sylph::{lookup, Line, Match, Matcher};
 
 fn to_value(m: Match) -> Value {
     Value::Map(vec![(Value::from("index"), Value::from(m.index))])

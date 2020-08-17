@@ -29,6 +29,7 @@ pub trait Line {
     fn line(&self) -> &str;
 }
 
+#[derive(Debug, Clone, PartialEq)]
 pub struct OwnedLine {
     pub path: String,
     pub line: String,

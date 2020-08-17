@@ -237,19 +237,23 @@ function sylph:init(provider_name, filter_name)
       if self.filter.on_selected ~= nil then
         self.filter.on_selected(self.lines[self.selected])
       end
-      local path = self.lines[self.selected].path
+      local loc = self.lines[self.selected].location
       -- open current buffer for file if it exists
-      local buf = vim.api.nvim_eval("bufnr(\""..path.."\")")
+      local buf = vim.api.nvim_eval("bufnr(\""..loc.path.."\")")
       window:close()
+      local cmd
       if buf ~= -1 then
-        vim.schedule(function()
-          vim.api.nvim_command(":b " .. buf)
-        end)
+        cmd = ":b " .. buf
       else
-        vim.schedule(function()
-          vim.api.nvim_command(":e " .. path)
-        end)
+        cmd = ":e " .. loc.path
       end
+      vim.schedule(function()
+        vim.api.nvim_command(cmd)
+        if loc.row ~= nil then
+          vim.call("cursor", loc.row, loc.col)
+          vim.api.nvim_command("normal! zz")
+        end
+      end)
     end
   end
 
@@ -356,15 +360,19 @@ sylph:register_provider("files", {
                             if window.launched_from_name == x then
                               return nil
                             else
-                              return {path=x, line=x}
+                              return {location={path=x}, line=x}
                             end
                           end),
   run_on_input = false,
 })
 sylph:register_provider("grep", {
-  handler = sylph:process("rg", {}, function(window, line)
-    local path = line:gmatch("[^:]+")
-    return {path=path(), line=line}
+  handler = sylph:process("rg", {"-n", "--column"}, function(window, line)
+    local m = line:gmatch("[^:]+")
+    local path = m()
+    local row = m()
+    local col = m()
+    local line = m()
+    return {location={path=path, row=row, col=col}, line=line}
   end),
   run_on_input = true
 })

@@ -1,5 +1,7 @@
 use anyhow::{anyhow, Context, Result};
 use crossbeam_channel::{unbounded, Receiver, Sender, TryRecvError};
+use mlua::prelude::*;
+use mlua::{UserData, Value};
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 use std::thread;
@@ -57,6 +59,7 @@ impl ThreadedMatcher {
         let (command_send, command_recv) = unbounded();
         let (result_send, result_recv) = unbounded::<(usize, Result<Vec<Match>>)>();
         thread::spawn(move || {
+            eprintln!("New matcher");
             let mut matcher = match Matcher::new() {
                 Ok(matcher) => matcher,
                 Err(err) => {
@@ -112,7 +115,10 @@ impl ThreadedMatcher {
                 num_results,
                 lines: lines
                     .iter()
-                    .map(|l| OwnedLine{path: l.path().to_string(), line: l.line().to_string()})
+                    .map(|l| OwnedLine {
+                        path: l.path().to_string(),
+                        line: l.line().to_string(),
+                    })
                     .collect(),
                 id: self.command_num,
             })
@@ -297,29 +303,6 @@ pub extern "C" fn update_matcher(matcher: *mut Matcher, path: *const c_char) -> 
 //     return_c_error(&res)
 // }
 
-// TODO: XXX: this function is not needed. Should spawn a new thread and run process on that.
-// Thread will send an async notify back when it is done.
-// #[no_mangle]
-// pub extern "C" fn process<'a, 'b, 'c>(
-//     inc_matcher: *mut IncrementalMatcher<'a, 'b, 'c, RawLine>,
-//     num_lines: usize,
-// ) -> *const c_char {
-//     let res: Result<()> = try {
-//         let progress = unsafe {
-//             inc_matcher
-//                 .as_mut()
-//                 .context("null IncrementalMatcher pointer")?
-//                 .process(num_lines)?
-//         };
-//         match progress {
-//             Done(results) => {
-//             },
-//             Working =>
-//         }
-//     };
-//     return_c_error(&res)
-// }
-
 #[no_mangle]
 pub extern "C" fn best_matches_c(
     matcher: *const Matcher,
@@ -354,4 +337,73 @@ pub extern "C" fn best_matches_c(
         ()
     };
     return_c_error(&res)
+}
+
+impl<'lua> FromLua<'lua> for OwnedLine {
+    fn from_lua(value: Value<'lua>, _: &'lua Lua) -> mlua::Result<Self> {
+        match value {
+            Value::Table(tbl) => {
+                let line = tbl.get("line")?;
+                let path = match tbl.get("location")? {
+                    Value::Table(loc_tbl) => loc_tbl.get("path"),
+                    x => Err(mlua::Error::FromLuaConversionError {
+                        from: x.type_name(),
+                        to: "location",
+                        message: Some("expected table".to_string()),
+                    }),
+                }?;
+                Ok(OwnedLine { path, line })
+            }
+            _ => Err(mlua::Error::FromLuaConversionError {
+                from: value.type_name(),
+                to: "OwnedLine",
+                message: Some("expected table".to_string()),
+            }),
+        }
+    }
+}
+
+impl<'lua> ToLua<'lua> for Match {
+    fn to_lua(self, lua: &'lua Lua) -> mlua::Result<Value<'lua>> {
+        let x = vec![
+            ("index", self.index.to_lua(lua)?),
+            ("score", self.score.to_lua(lua)?),
+            ("context_score", self.context_score.to_lua(lua)?),
+            ("query_score", self.query_score.to_lua(lua)?),
+            ("frequency_score", self.frequency_score.to_lua(lua)?),
+        ];
+        lua.create_table_from(x.into_iter()).map(|x| Value::Table(x))
+    }
+}
+
+impl UserData for ThreadedMatcher {
+    fn add_methods<'lua, M: LuaUserDataMethods<'lua, Self>>(methods: &mut M) {
+        methods.add_method_mut("query", |_, this, vals| {
+            let (query, context, num_results, lines): (String, String, usize, Vec<OwnedLine>) =
+                vals;
+            this.query(&query, &context, num_results, &lines);
+            Ok(())
+        });
+        methods.add_method("get_result", |lua, this, _: ()| match this.get_result() {
+            None => Ok((Value::Nil, Value::Nil)),
+            Some(Ok(mtchs)) => Ok((mtchs.to_lua(lua)?, Value::Nil)),
+            Some(Err(err)) => Ok((Value::Nil, err.to_string().to_lua(lua)?)),
+        });
+        methods.add_method("update", |_, this, s| {
+            let s: String = s;
+            this.update(&s);
+            Ok(())
+        });
+    }
+}
+
+fn threaded_matcher(_: &Lua, _: ()) -> LuaResult<ThreadedMatcher> {
+    Ok(ThreadedMatcher::new())
+}
+
+#[lua_module]
+fn filter(lua: &Lua) -> LuaResult<LuaTable> {
+    let exports = lua.create_table()?;
+    exports.set("threaded_matcher", lua.create_function(threaded_matcher)?)?;
+    Ok(exports)
 }

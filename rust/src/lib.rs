@@ -9,6 +9,8 @@ extern crate binary_heap_plus;
 extern crate crossbeam_channel;
 extern crate serde;
 extern crate sublime_fuzzy;
+#[macro_use]
+extern crate mlua_derive;
 
 mod ffi;
 mod matcher;
