@@ -33,5 +33,6 @@ cbindgen = "*"
 
 [profile.release]
 debug = true
+panic = "unwind"
 # codegen-units = 1
 # lto = true

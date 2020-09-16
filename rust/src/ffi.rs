@@ -1,41 +1,12 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Result};
 use crossbeam_channel::{unbounded, Receiver, Sender, TryRecvError};
 use mlua::prelude::*;
 use mlua::{UserData, Value};
-use std::ffi::{CStr, CString};
-use std::os::raw::c_char;
 use std::thread;
 
 use super::matcher::*;
 
-#[repr(C)]
 #[derive(Debug)]
-pub struct RawLine {
-    path: *const c_char,
-    line: *const c_char,
-}
-
-impl Line for RawLine {
-    fn path(&self) -> &str {
-        unsafe { CStr::from_ptr(self.path).to_str().unwrap() }
-    }
-    fn line(&self) -> &str {
-        unsafe { CStr::from_ptr(self.line).to_str().unwrap() }
-    }
-}
-
-#[no_mangle]
-pub extern "C" fn free_string(s: *mut c_char) {
-    unsafe { CString::from_raw(s) };
-}
-
-fn return_c_error<A>(r: &Result<A>) -> *const c_char {
-    match r {
-        Ok(_) => std::ptr::null(),
-        Err(err) => CString::new(format!("{}", err)).unwrap().into_raw(),
-    }
-}
-
 enum Command {
     Query {
         query: String,
@@ -59,10 +30,10 @@ impl ThreadedMatcher {
         let (command_send, command_recv) = unbounded();
         let (result_send, result_recv) = unbounded::<(usize, Result<Vec<Match>>)>();
         thread::spawn(move || {
-            eprintln!("New matcher");
             let mut matcher = match Matcher::new() {
                 Ok(matcher) => matcher,
                 Err(err) => {
+                    eprintln!("{}", err);
                     result_send.send((0, Err(err))).unwrap();
                     return;
                 }
@@ -121,8 +92,7 @@ impl ThreadedMatcher {
                     })
                     .collect(),
                 id: self.command_num,
-            })
-            .unwrap();
+            });
     }
 
     fn get_result(&self) -> Option<Result<Vec<Match>>> {
@@ -143,200 +113,6 @@ impl ThreadedMatcher {
             .send(Command::Update(path.to_string()))
             .unwrap();
     }
-}
-
-#[no_mangle]
-pub extern "C" fn new_threaded_matcher(ptr: *mut *mut ThreadedMatcher) -> *const c_char {
-    unsafe {
-        *ptr = Box::into_raw(Box::new(ThreadedMatcher::new()));
-    }
-    return_c_error(&Ok(()))
-}
-
-#[no_mangle]
-pub extern "C" fn free_threaded_matcher(matcher: *mut ThreadedMatcher) {
-    unsafe { Box::from_raw(matcher) };
-    ()
-}
-
-#[no_mangle]
-pub extern "C" fn start_matches_threaded(
-    matcher: *mut ThreadedMatcher,
-    query: *const c_char,
-    context: *const c_char,
-    num_matches: u64,
-    lines_ptr: *const RawLine,
-    num_lines: u64,
-) -> *const c_char {
-    let res: Result<()> = try {
-        // TODO: avoid allocating a vector?
-        let lines = unsafe { std::slice::from_raw_parts(lines_ptr, num_lines as usize) };
-        let q = unsafe { CStr::from_ptr(query).to_str()? };
-        let c = unsafe { CStr::from_ptr(context).to_str()? };
-
-        unsafe {
-            matcher.as_mut().context("invalid pointer")?.query(
-                q,
-                c,
-                num_matches as usize,
-                lines.as_ref(),
-            )
-        }
-    };
-    return_c_error(&res)
-}
-
-#[no_mangle]
-pub extern "C" fn get_matches_threaded(
-    matcher: *const ThreadedMatcher,
-    result_ptr: *mut Match,
-    num_matches: *mut i64,
-) -> *const c_char {
-    let er = try {
-        let matches = unsafe { matcher.as_ref().context("invalid pointer")?.get_result() };
-        match matches {
-            Some(m) => {
-                let mtchs = m?;
-                // copy matches into result vector
-                let results_out =
-                    unsafe { std::slice::from_raw_parts_mut(result_ptr, *num_matches as usize) };
-                unsafe { *num_matches = mtchs.len() as i64 };
-                for i in 0..mtchs.len() {
-                    results_out[i] = mtchs[i].clone()
-                }
-            }
-            None => unsafe {
-                *num_matches = -1;
-            },
-        }
-    };
-    return_c_error(&er)
-}
-
-#[no_mangle]
-pub extern "C" fn update_matcher_threaded(
-    matcher: *mut ThreadedMatcher,
-    path: *const c_char,
-) -> *const c_char {
-    println!("Updating");
-    let r = unsafe {
-        matcher
-            .as_mut()
-            .ok_or(anyhow!("Invalid matcher"))
-            .and_then(|m| Ok(m.update(CStr::from_ptr(path).to_str()?)))
-    };
-    println!("done");
-    return_c_error(&r)
-}
-
-#[no_mangle]
-pub extern "C" fn new_matcher(ptr: *mut *mut Matcher) -> *const c_char {
-    let r = match Matcher::new() {
-        Ok(m) => {
-            unsafe {
-                *ptr = Box::into_raw(Box::new(m));
-            }
-            Ok(())
-        }
-        Err(err) => Err(err),
-    };
-    return_c_error(&r)
-}
-
-#[no_mangle]
-pub extern "C" fn free_matcher(matcher: *mut Matcher) {
-    unsafe { Box::from_raw(matcher) };
-    ()
-}
-
-#[no_mangle]
-pub extern "C" fn update_matcher(matcher: *mut Matcher, path: *const c_char) -> *const c_char {
-    let r = unsafe {
-        matcher
-            .as_mut()
-            .ok_or(anyhow!("Invalid matcher"))
-            .and_then(|m| Ok(m.update(CStr::from_ptr(path).to_str()?)))
-    };
-    return_c_error(&r)
-}
-
-// #[no_mangle]
-// pub extern "C" fn incremental_match<'a, 'b, 'c>(
-//     matcher: *const Matcher,
-//     query: *const c_char,
-//     context: *const c_char,
-//     num_matches: u64,
-//     lines_ptr: *const RawLine,
-//     num_lines: u64,
-//     incremental_matcher: *mut *mut IncrementalMatcher<'a, 'b, 'c, RawLine>,
-// ) -> *const c_char {
-//     let res: Result<()> = try {
-//         // TODO: avoid allocating a vector?
-//         let lines = unsafe { std::slice::from_raw_parts(lines_ptr, num_lines as usize) };
-//         let q = unsafe { CStr::from_ptr(query).to_str()? };
-//         let c = unsafe { CStr::from_ptr(context).to_str()? };
-//         let inc_matcher = matcher.as_ref().context("invalid pointer")?.incremental_match(q, c, num_matches, lines.as_ref());
-//
-//         let (stop_send, stop_receive) = channel();
-//         let (result_send, result_receive) = channel();
-//         thread::spawn(move || {
-//             let res = try {
-//             let mut progress = inc_matcher.process(100)?;
-//             while progress == Progress::Working && !stop_receive.try_recv().is_err() {
-//                 progress = inc_matcher.process(100)?;
-//             }
-//             if let Progress::Done(result) = progress {
-//                 result_send.send(result);
-//             }
-//             };
-//         });
-//
-//         unsafe {
-//             *incremental_matcher = Box::into_raw(Box::new(
-//                 matcher
-//                     .as_ref()
-//                     .context("invalid pointer")?
-//                     .incremental_match(q, c, num_matches, lines.as_ref()),
-//             ))
-//         };
-//     };
-//     return_c_error(&res)
-// }
-
-#[no_mangle]
-pub extern "C" fn best_matches_c(
-    matcher: *const Matcher,
-    query: *const c_char,
-    context: *const c_char,
-    num_matches: u64,
-    lines_ptr: *const RawLine,
-    num_lines: u64,
-    result_ptr: *mut Match,
-    num_results: *mut u64,
-) -> *const c_char {
-    let res: Result<()> = try {
-        // TODO: avoid allocating a vector?
-        let lines = unsafe { std::slice::from_raw_parts(lines_ptr, num_lines as usize) };
-        let q = unsafe { CStr::from_ptr(query).to_str()? };
-        let c = unsafe { CStr::from_ptr(context).to_str()? };
-
-        let mtchs = unsafe {
-            matcher.as_ref().context("invalid pointer")?.best_matches(
-                q,
-                c,
-                num_matches,
-                lines.as_ref(),
-            )?
-        };
-        // copy matches into result vector
-        let result = unsafe { std::slice::from_raw_parts_mut(result_ptr, num_matches as usize) };
-        unsafe { *num_results = mtchs.len() as u64 };
-        for i in 0..mtchs.len() {
-            result[i] = mtchs[i].clone()
-        }
-        ()
-    };
-    return_c_error(&res)
 }
 
 impl<'lua> FromLua<'lua> for OwnedLine {
@@ -379,11 +155,11 @@ impl<'lua> ToLua<'lua> for Match {
 impl UserData for ThreadedMatcher {
     fn add_methods<'lua, M: LuaUserDataMethods<'lua, Self>>(methods: &mut M) {
         methods.add_method_mut("query", |_, this, vals| {
-            let (query, context, num_results, lines): (String, String, usize, Vec<OwnedLine>) =
-                vals;
-            this.query(&query, &context, num_results, &lines);
-            Ok(())
-        });
+                let (query, context, num_results, lines): (String, String, usize, Vec<OwnedLine>) =
+                    vals;
+                this.query(&query, &context, num_results, &lines);
+                Ok(())
+            });
         methods.add_method("get_result", |lua, this, _: ()| match this.get_result() {
             None => Ok((Value::Nil, Value::Nil)),
             Some(Ok(mtchs)) => Ok((mtchs.to_lua(lua)?, Value::Nil)),

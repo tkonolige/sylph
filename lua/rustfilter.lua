@@ -6,7 +6,7 @@ local timer = nil
 function handler(window, lines, query, callback)
   local err = matcher:query(query, window.launched_from_name, 10, lines)
   if err ~= nil then
-    sylph.print_err(ffi.string(err))
+    sylph.print_err(err)
     return
   end
 
@@ -19,7 +19,7 @@ function handler(window, lines, query, callback)
     end
     local res, err = matcher:get_result()
     if err ~= nil then
-      sylph.print_err(ffi.string(err))
+      sylph.print_err(err)
       return
     end
     if res == nil then
