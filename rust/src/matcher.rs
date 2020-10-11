@@ -6,6 +6,7 @@ use itertools::process_results;
 use neovim_lib::Value;
 use rusqlite::{Connection, OptionalExtension};
 use std::path::PathBuf;
+use strsim::normalized_levenshtein;
 
 pub fn lookup<'a>(val: &'a Value, key: &str) -> Result<&'a Value> {
     let map: &Vec<(Value, Value)> =
@@ -108,17 +109,12 @@ impl Matcher {
                 .into_iter()
                 .enumerate()
                 .map(|(i, line)| -> Result<Option<Match>> {
-                    let frequency_score = self.frequency.score(line.path())?;
+                    let frequency_score = 0.;//self.frequency.score(line.path())?;
                     // Context score decays as the user input gets longer. We want good matches with no
                     // input, it matters less when the user has been explicit about what they want.
                     let context_score = (query.len() as f64 * -0.5).exp()
                         * if context.len() > 0 {
-                            // FIXME will never give a match as context will not be a substring of
-                            // line
-                            self.skim_matcher
-                                .fuzzy_match(&line.line(), context)
-                                .unwrap_or(0) as f64
-                                / line.line().len() as f64
+                            normalized_levenshtein(&line.line(), context) * 10.
                         } else {
                             0.
                         };

@@ -27,6 +27,7 @@ binary-heap-plus = "*"
 crossbeam-channel = "*"
 mlua = { version = "*", features = ["luajit", "module"] }
 mlua_derive = "*"
+strsim = "0.10.0"
 
 [build-dependencies]
 cbindgen = "*"

@@ -11,6 +11,7 @@ extern crate serde;
 extern crate sublime_fuzzy;
 #[macro_use]
 extern crate mlua_derive;
+extern crate strsim;
 
 mod ffi;
 mod matcher;
