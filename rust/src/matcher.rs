@@ -298,7 +298,7 @@ impl FrequencyCounter {
         transaction.commit().context("Could not commit transaction")
     }
 
-    pub fn scores(&self, entry: &[str]) -> Result<f64> {
+    pub fn score(&self, entry: &str) -> Result<f64> {
         let c = self
             .db
             .prepare("SELECT clock FROM clock")?
