@@ -165,9 +165,11 @@ function sylph:init(provider_name, filter_name)
         end
       end
       vim.schedule(function()
-        vim.api.nvim_buf_set_lines(self.buf, 1, -1, false, formatted)
-        vim.api.nvim_win_set_height(self.win, num_lines+1)
-        self:update_highlights()
+        if self.buf ~= -1 then
+          vim.api.nvim_buf_set_lines(self.buf, 1, -1, false, formatted)
+          vim.api.nvim_win_set_height(self.win, num_lines+1)
+          self:update_highlights()
+        end
       end)
     end
   end
@@ -214,6 +216,10 @@ function sylph:init(provider_name, filter_name)
   function window:close()
       vim.api.nvim_command("bw! "..self.buf)
       window = nil
+      if self.running_proc ~= nil then
+        self.running_proc()
+      end
+      self.buf = -1
   end
 
   window:create()
