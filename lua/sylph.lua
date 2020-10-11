@@ -154,7 +154,11 @@ function sylph:init(provider_name, filter_name)
       self.selected = 1
       -- TODO: move to config
       local num_lines = math.min(10, #lines)
-      local formatted = util.map(function(x) return x.line end, {unpack(lines, 1, num_lines)})
+      local format = function(x)
+        local n = string.format("%2.2f %2.2f %2.2f", x.query_score, x.frequency_score, x.context_score)
+        return x.line .. string.rep(" ", 80 - #x.line - #n) .. n
+      end
+      local formatted = util.map(format, {unpack(lines, 1, num_lines)})
       for i,x in ipairs(formatted) do
         if type(x) ~= "string" then
           error(string.format("Line %d in filter lines is not a string. Actual value: %s",i,vim.inspect(x)))

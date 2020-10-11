@@ -27,7 +27,11 @@ function handler(window, lines, query, callback)
     else
       local matched_lines = {}
       for _, x in ipairs(res) do
-        matched_lines[#matched_lines+1] = lines[x.index+1]
+        local l = lines[x.index+1]
+        l.frequency_score = x.frequency_score
+        l.context_score = x.context_score
+        l.query_score = x.query_score
+        matched_lines[#matched_lines+1] = l
       end
       callback(matched_lines)
     end

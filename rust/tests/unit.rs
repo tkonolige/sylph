@@ -13,6 +13,9 @@ impl Line for JSONLine {
     fn path(&self) -> &str {
         self.path.as_str()
     }
+    fn line(&self) -> &str {
+        self.name.as_str()
+    }
 }
 
 #[derive(Deserialize)]
@@ -49,7 +52,9 @@ fn incremental_same_as_batch() {
                 }
                 match progress {
                     Progress::Done(results) => {
-                        assert!(mtchs_batch == results, "{:#?} {:#?}", mtchs_batch, results)
+                        for i in 0..mtchs_batch.len() {
+                            assert!(mtchs_batch[i] == results[i], "{}th result:\n{:#?}\nvs\n{:#?}", i, mtchs_batch[i], results[i])
+                        }
                     }
                     _ => assert!(false),
                 }

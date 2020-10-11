@@ -113,6 +113,8 @@ impl Matcher {
                     // input, it matters less when the user has been explicit about what they want.
                     let context_score = (query.len() as f64 * -0.5).exp()
                         * if context.len() > 0 {
+                            // FIXME will never give a match as context will not be a substring of
+                            // line
                             self.skim_matcher
                                 .fuzzy_match(&line.line(), context)
                                 .unwrap_or(0) as f64
@@ -256,9 +258,8 @@ impl<'a, 'b, 'c, L: Line> IncrementalMatcher<'a, 'b, 'c, L> {
 }
 
 /// FrequencyCounter measures freceny---a combination of frequency and recency.
-/// The score for an entry once is e^(t-x) where t is the time at which it was used and x is the
-/// current time. Thus the total score for an entry is e^-x * (e^t1 + e^t2 + e^t3 + ...). We can
-/// store e^t1 + e^t2 + e^t3 + ... as a single number. Updates can just be added to this number.
+/// See https://github.com/mozilla/application-services/issues/610
+/// ln(e^(ln(e^t1) + t2)) + t3
 struct FrequencyCounter {
     db: Connection,
 }
@@ -275,7 +276,6 @@ impl FrequencyCounter {
             INSERT INTO clock (id, clock) SELECT 0, 0 WHERE NOT EXISTS(SELECT 1 FROM clock);
             CREATE TABLE IF NOT EXISTS counts ( name TEXT PRIMARY KEY NOT NULL, count REAL NOT NULL);
         ")?;
-        // TODO: make sure tables exist
         Ok(FrequencyCounter { db })
     }
 
@@ -291,14 +291,14 @@ impl FrequencyCounter {
             .optional()?
             .unwrap_or(0.);
         transaction.execute(
-            "UPDATE counts SET count = ?1 WHERE name = ?2",
-            params![count, entry],
+            "INSERT OR REPLACE INTO counts (name, count) VALUES (?1, ?2)",
+            params![entry, clock as f64 + (((clock as f64) - count).exp() + 1.).ln()],
         )?;
         transaction.execute("UPDATE clock SET clock = ?", params![clock])?;
         transaction.commit().context("Could not commit transaction")
     }
 
-    pub fn score(&self, entry: &str) -> Result<f64> {
+    pub fn scores(&self, entry: &[str]) -> Result<f64> {
         let c = self
             .db
             .prepare("SELECT clock FROM clock")?
@@ -308,9 +308,10 @@ impl FrequencyCounter {
             .prepare("SELECT count FROM counts WHERE name = ?")?
             .query_row(params![entry], |row| row.get::<_, f64>(0))
             .optional()?
-            .unwrap_or(0.);
-        Ok((-c).exp() * count /
-            // This is the maximum possible score: e^-x * (e^1 + e^2 + e^3 + ...)
-            ((-c).exp() * ((c + 1.).exp() - 1.) / (std::f64::consts::E - 1.)))
+            .unwrap_or(c);
+        Ok((c - count).exp())
+        // Ok((-c).ln() * count /
+        //     // This is the maximum possible score: e^-x * (e^1 + e^2 + e^3 + ...)
+        //     ((-c).ln() * ((c + 1.).ln() - 1.) / (std::f64::consts::E - 1.)))
     }
 }
