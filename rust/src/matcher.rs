@@ -108,7 +108,7 @@ impl Matcher {
                 .into_iter()
                 .enumerate()
                 .map(|(i, line)| -> Result<Option<Match>> {
-                    let frequency_score = self.frequency.score(line.path());
+                    let frequency_score = self.frequency.score(line.path()) * 10.;
                     // Context score decays as the user input gets longer. We want good matches with no
                     // input, it matters less when the user has been explicit about what they want.
                     let context_score = (query.len() as f64 * -0.5).exp()
@@ -269,7 +269,7 @@ impl FrequencyCounter {
 
     pub fn score(&self, entry: &str) -> f64 {
         match self.cache.peek(&entry.to_string()) { // TODO: should not have to do str -> String
-            Some(c) => ((c - self.clock) as f64).exp(),
+            Some(c) => (*c as f64 - self.clock as f64).exp(),
             None => 0.
         }
     }
