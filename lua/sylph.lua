@@ -40,7 +40,7 @@ function sylph:init(provider_name, filter_name)
   vim.api.nvim_command("stopinsert!")
   local provider = providers[provider_name]
   if provider == nil then
-    print_err("sylph: Error: provider %s not found. Available providers are %s", name, vim.inspect(keys(providers)))
+    print_err("sylph: Error: provider %s not found. Available providers are %s", name, vim.inspect(util.keys(providers)))
     return
   end
   -- Use rust as the default filter
@@ -49,7 +49,7 @@ function sylph:init(provider_name, filter_name)
   end
   local filter = filters[filter_name]
   if filter == nil then
-    print_err("sylph: Error: filter %s not found. Available filters are %s", name, vim.inspect(keys(filters)))
+    print_err("sylph: Error: filter %s not found. Available filters are %s", name, vim.inspect(util.keys(filters)))
     return
   end
 
@@ -72,7 +72,8 @@ function sylph:init(provider_name, filter_name)
   function window:create()
     self.buf = vim.api.nvim_create_buf(false, true)
     vim.api.nvim_buf_set_name(self.buf, "__sylph")
-    self.win = vim.api.nvim_open_win(self.buf, true, {relative="win", row=20, col=20, width=80, height=1, style="minimal"})
+    self.width = 80
+    self.win = vim.api.nvim_open_win(self.buf, true, {relative="win", row=20, col=20, width=self.width, height=1, style="minimal"})
     vim.api.nvim_buf_set_option(self.buf, "filetype", "sylph")
     vim.api.nvim_buf_set_option(self.buf, "bufhidden", "wipe")
     vim.api.nvim_command("startinsert!")
@@ -155,8 +156,8 @@ function sylph:init(provider_name, filter_name)
       -- TODO: move to config
       local num_lines = math.min(10, #lines)
       local format = function(x)
-        local n = string.format("%2.2f %2.2f %2.2f", x.query_score, x.frequency_score, x.context_score)
-        return x.line .. string.rep(" ", 80 - #x.line - #n) .. n
+        local width_left = self.width-18
+        return string.format("%-"..width_left.."s %5.2f %5.2f %5.2f", x.line, x.query_score, x.frequency_score, x.context_score)
       end
       local formatted = util.map(format, {unpack(lines, 1, num_lines)})
       for i,x in ipairs(formatted) do

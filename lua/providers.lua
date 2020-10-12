@@ -4,16 +4,23 @@ local util = require("util")
 local lsp_util = require('vim.lsp.util')
 function lsp_handle(window, query, callback)
   local function h(err, method, params, client_id)
+    local cwd = vim.fn.getcwd()
     if err then
       sylph:print_err("LSP error: %s", err)
     else
-      lines = {}
+      local lines = {}
       for _,x in ipairs(params) do
-        lines[#lines+1] = { line = x.name
+        local protocol, path = x.location.uri:gmatch("([a-z]+)://(.+)")()
+        if string.sub(path, 1, cwd:len()) == cwd then
+          path = string.sub(path, cwd:len()+2)
+        end
+        local col = x.location.range.start.character + 1
+        local row = x.location.range.start.line + 1
+        lines[#lines+1] = { line = string.format("%s:%d:%d: %s", path, row, col, x.name)
                           , location =
-                            { path = x.location.uri
-                            , col = x.location.range.start.character + 1
-                            , row = x.location.range.start.line + 1
+                            { path = path
+                            , col = col
+                            , row = row
                             }
                           }
       end
@@ -101,7 +108,10 @@ sylph:register_provider("grep", {
     local row = m()
     local col = m()
     local line = m()
-    return {location={path=path, row=row, col=col}, line=line}
+    if path == nil or row == nil or line == nil then
+      return nil
+    end
+    return {location={path=path, row=row, col=col}, line=path..":"..line}
   end),
   run_on_input = true
 })
