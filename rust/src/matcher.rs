@@ -1,11 +1,10 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Result};
 use binary_heap_plus::*;
 use fuzzy_matcher::skim::{SkimMatcherV2, SkimScoreConfig};
 use fuzzy_matcher::FuzzyMatcher;
 use itertools::process_results;
 use neovim_lib::Value;
-use rusqlite::{Connection, OptionalExtension};
-use std::path::PathBuf;
+use lru::LruCache;
 use strsim::normalized_levenshtein;
 
 pub fn lookup<'a>(val: &'a Value, key: &str) -> Result<&'a Value> {
@@ -93,7 +92,7 @@ impl Matcher {
         })
     }
 
-    pub fn update(&mut self, entry: &str) -> Result<()> {
+    pub fn update(&mut self, entry: &str) {
         self.frequency.update(entry)
     }
 
@@ -109,7 +108,7 @@ impl Matcher {
                 .into_iter()
                 .enumerate()
                 .map(|(i, line)| -> Result<Option<Match>> {
-                    let frequency_score = 0.;//self.frequency.score(line.path())?;
+                    let frequency_score = self.frequency.score(line.path());
                     // Context score decays as the user input gets longer. We want good matches with no
                     // input, it matters less when the user has been explicit about what they want.
                     let context_score = (query.len() as f64 * -0.5).exp()
@@ -253,61 +252,25 @@ impl<'a, 'b, 'c, L: Line> IncrementalMatcher<'a, 'b, 'c, L> {
     }
 }
 
-/// FrequencyCounter measures freceny---a combination of frequency and recency.
-/// See https://github.com/mozilla/application-services/issues/610
-/// ln(e^(ln(e^t1) + t2)) + t3
 struct FrequencyCounter {
-    db: Connection,
+    cache: LruCache<String, usize>,
+    clock: usize,
 }
 
 impl FrequencyCounter {
     pub fn new() -> Result<Self> {
-        let db_path = std::env::var("XDG_CACHE_DIR")
-            .map(|path| PathBuf::from(path))
-            .or(std::env::var("HOME").map(|path| PathBuf::from(path).join(".cache")))?
-            .join("sylph/frequency.sqlite");
-        let db = Connection::open(db_path)?;
-        db.execute_batch("
-            CREATE TABLE IF NOT EXISTS clock ( id INTEGER PRIMARY KEY CHECK (id = 0), clock INTEGER NOT NULL);
-            INSERT INTO clock (id, clock) SELECT 0, 0 WHERE NOT EXISTS(SELECT 1 FROM clock);
-            CREATE TABLE IF NOT EXISTS counts ( name TEXT PRIMARY KEY NOT NULL, count REAL NOT NULL);
-        ")?;
-        Ok(FrequencyCounter { db })
+        Ok(FrequencyCounter { cache: LruCache::new(20), clock: 0 })
     }
 
-    pub fn update(&mut self, entry: &str) -> Result<()> {
-        let transaction = self.db.transaction()?;
-        let clock = transaction
-            .prepare("SELECT clock FROM clock")?
-            .query_row(rusqlite::NO_PARAMS, |row| row.get::<_, isize>(0))?
-            + 1;
-        let count = transaction
-            .prepare("SELECT count FROM counts WHERE name = ?")?
-            .query_row(params![entry], |row| row.get::<_, f64>(0))
-            .optional()?
-            .unwrap_or(0.);
-        transaction.execute(
-            "INSERT OR REPLACE INTO counts (name, count) VALUES (?1, ?2)",
-            params![entry, clock as f64 + (((clock as f64) - count).exp() + 1.).ln()],
-        )?;
-        transaction.execute("UPDATE clock SET clock = ?", params![clock])?;
-        transaction.commit().context("Could not commit transaction")
+    pub fn update(&mut self, entry: &str) {
+        self.clock += 1;
+        self.cache.put(entry.to_string(), self.clock);
     }
 
-    pub fn score(&self, entry: &str) -> Result<f64> {
-        let c = self
-            .db
-            .prepare("SELECT clock FROM clock")?
-            .query_row(rusqlite::NO_PARAMS, |row| row.get::<_, isize>(0))? as f64;
-        let count = self
-            .db
-            .prepare("SELECT count FROM counts WHERE name = ?")?
-            .query_row(params![entry], |row| row.get::<_, f64>(0))
-            .optional()?
-            .unwrap_or(c);
-        Ok((c - count).exp())
-        // Ok((-c).ln() * count /
-        //     // This is the maximum possible score: e^-x * (e^1 + e^2 + e^3 + ...)
-        //     ((-c).ln() * ((c + 1.).ln() - 1.) / (std::f64::consts::E - 1.)))
+    pub fn score(&self, entry: &str) -> f64 {
+        match self.cache.peek(&entry.to_string()) { // TODO: should not have to do str -> String
+            Some(c) => ((c - self.clock) as f64).exp(),
+            None => 0.
+        }
     }
 }

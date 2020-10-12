@@ -72,7 +72,7 @@ impl RequestHandler for EventHandler {
                 }
                 "selected" => {
                     let selected = JSONLine::from_value(&args[0])?;
-                    self.matcher.update(&selected.path)?;
+                    self.matcher.update(&selected.path);
                     Value::from(true)
                 }
                 f => Err(anyhow!("No such function {}.", f))?,

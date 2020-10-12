@@ -66,7 +66,7 @@ impl ThreadedMatcher {
                             result_send.send((id, Err(err))).unwrap();
                         }
                     }
-                    Command::Update(path) => matcher.update(&path).unwrap(),
+                    Command::Update(path) => matcher.update(&path),
                 }
             }
         });
