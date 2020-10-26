@@ -96,6 +96,38 @@ impl Matcher {
         self.frequency.update(entry)
     }
 
+    pub fn score(&self, query: &str, context: &str, index: usize, line: &str, path: &str) -> Option<Match> {
+        let frequency_score = self.frequency.score(path) * 10.;
+        // Context score decays as the user input gets longer. We want good matches with no
+        // input, it matters less when the user has been explicit about what they want.
+        let context_score = (query.len() as f64 * -0.5).exp()
+            * if context.len() > 0 {
+                normalized_levenshtein(line, context) * 10.
+            } else {
+                0.
+            };
+        let query_score = if query.len() > 0 {
+            let whole_score = self.skim_matcher.fuzzy_match(line, query)?  as f64 / query.len() as f64;
+            // Try and find path delimiters
+            let slash = line.rfind('/');
+            match slash {
+                None => whole_score,
+                Some(ind) => {
+                    self.skim_matcher.fuzzy_match(&line[ind..], query).map_or(0., |x| x as f64 / query.len() as f64) + whole_score
+                }
+            }
+        } else {
+            0.
+        };
+        Some(Match {
+            index: index,
+            score: frequency_score + context_score + query_score,
+            context_score,
+            frequency_score,
+            query_score,
+        })
+    }
+
     pub fn best_matches<L: Line>(
         &self,
         query: &str,
@@ -107,35 +139,7 @@ impl Matcher {
             lines
                 .into_iter()
                 .enumerate()
-                .map(|(i, line)| -> Result<Option<Match>> {
-                    let frequency_score = self.frequency.score(line.path()) * 10.;
-                    // Context score decays as the user input gets longer. We want good matches with no
-                    // input, it matters less when the user has been explicit about what they want.
-                    let context_score = (query.len() as f64 * -0.5).exp()
-                        * if context.len() > 0 {
-                            normalized_levenshtein(&line.line(), context) * 10.
-                        } else {
-                            0.
-                        };
-                    match self.skim_matcher.fuzzy_match(&line.line(), query) {
-                        Some(query_match) => {
-                            let query_score = if query.len() > 0 {
-                                query_match as f64 / line.line().len() as f64
-                            } else {
-                                0.
-                            };
-                            Ok(Some(Match {
-                                index: i,
-                                score: frequency_score + context_score + query_score,
-                                context_score,
-                                frequency_score,
-                                query_score,
-                            }))
-                        }
-                        // If there is no fuzzy match, we do not include this line in the results
-                        None => Ok(None),
-                    }
-                }),
+                .map(|(i, line)| -> Result<Option<Match>> { Ok(self.score(query, context, i, line.line(), line.path())) }),
             |iter| {
                 iter.filter_map(|x| x)
                     .fold(Vec::new(), |mut entries, mtch| {
