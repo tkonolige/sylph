@@ -72,8 +72,15 @@ function sylph:init(provider_name, filter_name)
   function window:create()
     self.buf = vim.api.nvim_create_buf(false, true)
     vim.api.nvim_buf_set_name(self.buf, "__sylph")
-    self.width = 80
-    self.win = vim.api.nvim_open_win(self.buf, true, {relative="win", row=20, col=20, width=self.width, height=1, style="minimal"})
+
+    -- Set the window size and location
+    local current_height = vim.api.nvim_win_get_height(vim.api.nvim_get_current_win())
+    local top = math.floor((current_height - 10) * .4)
+    local margin_side = 20
+    local current_width = vim.api.nvim_win_get_width(vim.api.nvim_get_current_win())
+    self.width = math.min(math.max(80, current_width - margin_side * 2), 100)
+    self.win = vim.api.nvim_open_win(self.buf, true, {relative="win", row=margin_side, col=top, width=self.width, height=1, style="minimal"})
+
     vim.api.nvim_buf_set_option(self.buf, "filetype", "sylph")
     vim.api.nvim_buf_set_option(self.buf, "bufhidden", "wipe")
     vim.api.nvim_command("startinsert!")
@@ -156,8 +163,15 @@ function sylph:init(provider_name, filter_name)
       -- TODO: move to config
       local num_lines = math.min(10, #lines)
       local format = function(x)
-        local width_left = self.width-18
-        return string.format("%-"..width_left.."s %5.2f %5.2f %5.2f", x.line, x.query_score, x.frequency_score, x.context_score)
+        local width_left = math.max(self.width-18, 0)
+        -- Manual pad string because format cannot handle long string formats
+        local s
+        if x.line:len() > width_left then
+          s = x.line:sub(-width_left, -1)
+        else
+          s = x.line .. string.rep(" ", width_left - x.line:len())
+        end
+        return string.format("%s %5.2f %5.2f %5.2f", s, x.query_score, x.frequency_score, x.context_score)
       end
       local formatted = util.map(format, {unpack(lines, 1, num_lines)})
       for i,x in ipairs(formatted) do

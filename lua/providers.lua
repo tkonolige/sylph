@@ -6,7 +6,7 @@ function lsp_handle(window, query, callback)
   local function h(err, method, params, client_id)
     local cwd = vim.fn.getcwd()
     if err then
-      sylph:print_err("LSP error: %s", err)
+      sylph.print_err("LSP error: %s", err)
     else
       local lines = {}
       for _,x in ipairs(params) do
@@ -27,9 +27,24 @@ function lsp_handle(window, query, callback)
       callback(lines)
     end
   end
-  -- TODO: Can we run this across all running language servers?
-  local mp, cancel = vim.lsp.buf_request(window.launched_from, 'workspace/symbol', {query=query}, h)
-  return cancel
+
+  local clients = vim.lsp.get_active_clients()
+  if # clients == 0 then
+    sylph.print_err("There are currently no running LSP clients")
+  end
+  local cancels = {}
+  for _, lsp in ipairs(clients) do
+    local status, id = lsp.request('workspace/symbol', {query=query}, h)
+    if not status then
+      sylph.print_err("LSP server %s has shut down", lsp.name)
+    end
+    cancels[#cancels+1] = function() lsp.cancel_request(id) end
+  end
+  return function()
+    for _, f in ipairs(cancels) do
+      f()
+    end
+  end
 end
 sylph:register_provider('lsp', {handler = lsp_handle, run_on_input = true})
 
@@ -52,7 +67,7 @@ function sylph:process(process_name, args, postprocess)
 
     function onreaderr(err, chunk)
       if chunk then
-        print_err("sylph: Error while running command: %s", chunk)
+        sylph.print_err("sylph: Error while running command: %s", chunk)
         return
       end
     end
@@ -75,7 +90,7 @@ function sylph:process(process_name, args, postprocess)
     local pid
     handle, pid = uv.spawn(process_name, {args=args_, stdio={stdin, stdout, stderr}}, onexit)
     if pid == nil then
-      print_err("sylph. Error running command %s: %s", args_, handle)
+      sylph.print_err("sylph. Error running command %s: %s", args_, handle)
     end
     uv.read_start(stdout, onread)
     uv.read_start(stderr, onreaderr)
