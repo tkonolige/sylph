@@ -2,13 +2,13 @@ local util = require("util")
 
 -- Provider for the built in neovim lsp server
 local lsp_util = require('vim.lsp.util')
-function lsp_handle(window, query, callback)
+local function lsp_handle(window, query, callback)
+  local lines = {} -- We accumulate lines because there are multiple clients
   local function h(err, method, params, client_id)
     local cwd = vim.fn.getcwd()
     if err then
       sylph.print_err("LSP error: %s", err)
     else
-      local lines = {}
       for _,x in ipairs(params) do
         local protocol, path = x.location.uri:gmatch("([a-z]+)://(.+)")()
         if string.sub(path, 1, cwd:len()) == cwd then
@@ -29,7 +29,7 @@ function lsp_handle(window, query, callback)
   end
 
   local clients = vim.lsp.get_active_clients()
-  if # clients == 0 then
+  if #clients == 0 then
     sylph.print_err("There are currently no running LSP clients")
   end
   local cancels = {}
