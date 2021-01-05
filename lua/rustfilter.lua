@@ -1,6 +1,9 @@
 local d = debug.getinfo(1).source:match("@?(.*/)")
--- TODO: use require when it is fixed in neovim
-local filterer = package.loadlib(d .. "filter.so", "luaopen_filter")()
+local soname = "so"
+if io.popen("uname"):read() == "Darwin" then
+  soname = "dylib"
+end
+local filterer = package.loadlib(d .. "../rust/target/release/libfilter." .. soname, "luaopen_filter")()
 
 -- create matcher object
 local matcher = filterer.threaded_matcher()
