@@ -12,6 +12,8 @@ jobs:
 
     steps:
     - uses: actions/checkout@v2
+    - name: Deps
+      run: sudo apt-get install libluajit-5.1-dev
     - name: Build
       run: cargo build --verbose
     - name: Run tests
