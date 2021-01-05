@@ -12,13 +12,20 @@ jobs:
 
     steps:
     - uses: actions/checkout@v2
+    - name: Install latest nightly
+      uses: actions-rs/toolchain@v1
+      with:
+          toolchain: nightly
+          override: true
     - name: Deps
       run: sudo apt-get install libluajit-5.1-dev
     - name: Build
-      run: cargo build --verbose
+      uses: actions-rs/cargo@v1
+      with:
+        command: build
+        args: --manifest-path rust/Cargo.toml --release
     - name: Run tests
-      run: cargo test --verbose
-
-    defaults:
-      run:
-        working-directory: rust
+      uses: actions-rs/cargo@v1
+      with:
+        command: test
+        args: --manifest-path rust/Cargo.toml --release
