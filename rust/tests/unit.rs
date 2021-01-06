@@ -1,4 +1,4 @@
-use filter::{Line, Matcher, Progress, ThreadedMatcher};
+use filter::{Line, Matcher, Progress};
 use serde::Deserialize;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
@@ -42,18 +42,26 @@ fn incremental_same_as_batch() {
             Err(err) => eprintln!("{:?}", err),
             Ok(json) => {
                 let mtchs_batch = matcher
-                    .best_matches(&json.query, &json.launched_from, 10, &json.lines)
+                    .best_matches(&json.query, &json.launched_from, 5, &json.lines)
                     .unwrap();
                 let mut inc_matcher =
-                    matcher.incremental_match(&json.query, &json.launched_from, 10, &json.lines);
+                    matcher.incremental_match(&json.query, &json.launched_from, 5, &json.lines);
                 let mut progress = inc_matcher.process(10).unwrap();
                 while progress == Progress::Working {
                     progress = inc_matcher.process(10).unwrap();
                 }
                 match progress {
                     Progress::Done(results) => {
+                        println!("{:#?}", mtchs_batch);
+                        println!("{:#?}", results);
                         for i in 0..mtchs_batch.len() {
-                            assert!(mtchs_batch[i] == results[i], "{}th result:\n{:#?}\nvs\n{:#?}", i, mtchs_batch[i], results[i])
+                            assert!(
+                                mtchs_batch[i] == results[i],
+                                "{}th result:\n{:#?}\nvs\n{:#?}",
+                                i,
+                                mtchs_batch[i],
+                                results[i]
+                            )
                         }
                     }
                     _ => assert!(false),

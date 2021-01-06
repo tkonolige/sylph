@@ -3,8 +3,9 @@ use binary_heap_plus::*;
 use fuzzy_matcher::skim::{SkimMatcherV2, SkimScoreConfig};
 use fuzzy_matcher::FuzzyMatcher;
 use itertools::process_results;
-use neovim_lib::Value;
+use itertools::Itertools;
 use lru::LruCache;
+use neovim_lib::Value;
 use strsim::normalized_levenshtein;
 
 pub fn lookup<'a>(val: &'a Value, key: &str) -> Result<&'a Value> {
@@ -65,8 +66,8 @@ impl PartialOrd for Match {
 
 impl Ord for Match {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.score
-            .partial_cmp(&other.score)
+        (self.score, self.index)
+            .partial_cmp(&(other.score, other.index))
             .unwrap_or(std::cmp::Ordering::Equal)
     }
 }
@@ -96,7 +97,14 @@ impl Matcher {
         self.frequency.update(entry)
     }
 
-    pub fn score(&self, query: &str, context: &str, index: usize, line: &str, path: &str) -> Option<Match> {
+    pub fn score(
+        &self,
+        query: &str,
+        context: &str,
+        index: usize,
+        line: &str,
+        path: &str,
+    ) -> Option<Match> {
         let frequency_score = self.frequency.score(path) * 10.;
         // Context score decays as the user input gets longer. We want good matches with no
         // input, it matters less when the user has been explicit about what they want.
@@ -107,13 +115,17 @@ impl Matcher {
                 0.
             };
         let query_score = if query.len() > 0 {
-            let whole_score = self.skim_matcher.fuzzy_match(line, query)?  as f64 / query.len() as f64;
+            let whole_score =
+                self.skim_matcher.fuzzy_match(line, query)? as f64 / query.len() as f64;
             // Try and find path delimiters
             let slash = line.rfind('/');
             match slash {
                 None => whole_score,
                 Some(ind) => {
-                    self.skim_matcher.fuzzy_match(&line[ind..], query).map_or(0., |x| x as f64 / query.len() as f64) + whole_score
+                    self.skim_matcher
+                        .fuzzy_match(&line[ind..], query)
+                        .map_or(0., |x| x as f64 / query.len() as f64)
+                        + whole_score
                 }
             }
         } else {
@@ -135,37 +147,37 @@ impl Matcher {
         num_results: u64,
         lines: &[L],
     ) -> Result<Vec<Match>> {
-        let mut mtchs = process_results(
+        let mtchs = process_results(
             lines
                 .into_iter()
                 .enumerate()
-                .map(|(i, line)| -> Result<Option<Match>> { Ok(self.score(query, context, i, line.line(), line.path())) }),
+                .map(|(i, line)| -> Result<Option<Match>> {
+                    Ok(self.score(query, context, i, line.line(), line.path()))
+                }),
             |iter| {
-                iter.filter_map(|x| x)
-                    .fold(Vec::new(), |mut entries, mtch| {
+                iter.filter_map(|x| x).fold(
+                    BinaryHeap::<Match, MinComparator>::with_capacity_min(num_results as usize),
+                    |mut entries, mtch| {
                         if entries.len() < num_results as usize {
                             entries.push(mtch);
                             entries
                         } else {
-                            let pos = entries.iter().position(|x| x.score < mtch.score);
-                            match pos {
-                                Some(idx) => entries[idx] = mtch,
-                                None => (),
+                            match entries.peek() {
+                                Some(smallest) if &mtch > smallest => {
+                                    entries.pop();
+                                    entries.push(mtch);
+                                }
+                                _ => (),
                             }
                             entries
                         }
-                    })
+                    },
+                )
             },
         )?;
-        // TODO: only get top n entries
-        mtchs.sort_unstable_by(|x, y| {
-            x.score
-                .partial_cmp(&y.score)
-                .unwrap_or(std::cmp::Ordering::Equal)
-                .reverse()
-        });
         Ok(mtchs
             .into_iter()
+            .sorted_by(|x, y| x.cmp(&y).reverse())
             .take(num_results as usize)
             .collect::<Vec<_>>())
     }
@@ -263,7 +275,10 @@ struct FrequencyCounter {
 
 impl FrequencyCounter {
     pub fn new() -> Result<Self> {
-        Ok(FrequencyCounter { cache: LruCache::new(20), clock: 0 })
+        Ok(FrequencyCounter {
+            cache: LruCache::new(20),
+            clock: 0,
+        })
     }
 
     pub fn update(&mut self, entry: &str) {
@@ -272,9 +287,10 @@ impl FrequencyCounter {
     }
 
     pub fn score(&self, entry: &str) -> f64 {
-        match self.cache.peek(&entry.to_string()) { // TODO: should not have to do str -> String
+        match self.cache.peek(&entry.to_string()) {
+            // TODO: should not have to do str -> String
             Some(c) => (*c as f64 - self.clock as f64).exp(),
-            None => 0.
+            None => 0.,
         }
     }
 }

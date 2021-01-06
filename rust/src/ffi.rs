@@ -79,20 +79,19 @@ impl ThreadedMatcher {
 
     fn query<L: Line>(&mut self, query: &str, context: &str, num_results: usize, lines: &[L]) {
         self.command_num += 1;
-        self.command_ch
-            .send(Command::Query {
-                query: query.to_string(),
-                context: context.to_string(),
-                num_results,
-                lines: lines
-                    .iter()
-                    .map(|l| OwnedLine {
-                        path: l.path().to_string(),
-                        line: l.line().to_string(),
-                    })
-                    .collect(),
-                id: self.command_num,
-            });
+        self.command_ch.send(Command::Query {
+            query: query.to_string(),
+            context: context.to_string(),
+            num_results,
+            lines: lines
+                .iter()
+                .map(|l| OwnedLine {
+                    path: l.path().to_string(),
+                    line: l.line().to_string(),
+                })
+                .collect(),
+            id: self.command_num,
+        });
     }
 
     fn get_result(&self) -> Option<Result<Vec<Match>>> {
@@ -148,18 +147,19 @@ impl<'lua> ToLua<'lua> for Match {
             ("query_score", self.query_score.to_lua(lua)?),
             ("frequency_score", self.frequency_score.to_lua(lua)?),
         ];
-        lua.create_table_from(x.into_iter()).map(|x| Value::Table(x))
+        lua.create_table_from(x.into_iter())
+            .map(|x| Value::Table(x))
     }
 }
 
 impl UserData for ThreadedMatcher {
     fn add_methods<'lua, M: LuaUserDataMethods<'lua, Self>>(methods: &mut M) {
         methods.add_method_mut("query", |_, this, vals| {
-                let (query, context, num_results, lines): (String, String, usize, Vec<OwnedLine>) =
-                    vals;
-                this.query(&query, &context, num_results, &lines);
-                Ok(())
-            });
+            let (query, context, num_results, lines): (String, String, usize, Vec<OwnedLine>) =
+                vals;
+            this.query(&query, &context, num_results, &lines);
+            Ok(())
+        });
         methods.add_method("get_result", |lua, this, _: ()| match this.get_result() {
             None => Ok((Value::Nil, Value::Nil)),
             Some(Ok(mtchs)) => Ok((mtchs.to_lua(lua)?, Value::Nil)),
