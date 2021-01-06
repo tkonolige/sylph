@@ -1,43 +1,54 @@
+name: Build Binaries
+
 on:
   release:
     types: [created]
 
 jobs:
   release:
-    name: release ${{ matrix.target }}
+    name: Release ${{ matrix.os }}
     strategy:
+      runs-on: ${{ matrix.os }}
       fail-fast: false
       matrix:
-        target: [x86_64-unknown-linux-musl, x86_64-apple-darwin]
-      steps:
-      - uses: actions/checkout@v2
-      - name: Install latest nightly
-        uses: actions-rs/toolchain@v1
-        with:
-            toolchain: nightly
-            override: true
-      - name: Deps
-        run: sudo apt-get install libluajit-5.1-dev
-      - name: Build
-        uses: actions-rs/cargo@v1
-        with:
-          command: build
-          args: --manifest-path rust/Cargo.toml --release
-      - name: Copy
-        run: cp rust/target/release/libfilter.dylib rust/target/release/libfilter.so
-        if: ${{ matrix.target == x86_64-apple-darwin }}
-      - name: Get release
-        id: get_release
-        uses: bruceadams/get-release@v1.2.2
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-      - name: Upload Release Asset
-        id: upload-release-asset
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.get_release.outputs.upload_url }}
-          asset_path: rust/target/release/libfilter.so
-          asset_name: ${{ matrix.target }}-libfilter.so
-          asset_content_type: application/octet-stream
+        os: [macos-latest, ubuntu-18.04]
+    steps:
+    - uses: actions/checkout@v2
+    - name: Install latest nightly
+      uses: actions-rs/toolchain@v1
+      with:
+          toolchain: nightly
+          override: true
+    - name: Deps
+      run: sudo apt-get install libluajit-5.1-dev
+      if: ${{ matrix.os != 'macos-latest' }}
+    - name: Deps
+      run: |
+        wget https://luajit.org/download/LuaJIT-2.1.0-beta3.tar.gz
+        tar xvf LuaJIT-2.1.0-beta3.tar.gz
+        cd LuaJIT-2.1.0-beta3
+        make install
+      if: ${{ matrix.os == 'macos-latest' }}
+    - name: Build
+      uses: actions-rs/cargo@v1
+      with:
+        command: build
+        args: --manifest-path rust/Cargo.toml --release
+    - name: Copy
+      run: cp rust/target/release/libfilter.dylib rust/target/release/libfilter.so
+      if: ${{ matrix.os == 'macos-latest' }}
+    - name: Get release
+      id: get_release
+      uses: bruceadams/get-release@v1.2.2
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+    - name: Upload Release Asset
+      id: upload-release-asset
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.get_release.outputs.upload_url }}
+        asset_path: rust/target/release/libfilter.so
+        asset_name: ${{ matrix.os }}-libfilter.so
+        asset_content_type: application/octet-stream
