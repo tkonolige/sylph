@@ -32,6 +32,13 @@ lru = "*"
 [build-dependencies]
 cbindgen = "*"
 
+[dev-dependencies]
+criterion = "0.3"
+
+[[bench]]
+name = "main"
+harness = false
+
 [profile.release]
 debug = true
 panic = "unwind"
