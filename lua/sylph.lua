@@ -253,6 +253,8 @@ function sylph:init(provider_name, filter_name)
   end
 
   window:create()
+
+  sylph.window = window
 end
 
 function sylph:close_window()
