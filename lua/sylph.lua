@@ -211,11 +211,12 @@ function sylph:init(provider_name, filter_name)
 
   function window:enter()
     if self.selected >= 0 and self.selected < #self.lines then
-      self:write_selected(self.lines[self.selected])
+      -- selected is 0-indexed
+      self:write_selected(self.lines[self.selected+1])
       if self.filter.on_selected ~= nil then
-        self.filter.on_selected(self.lines[self.selected])
+        self.filter.on_selected(self.lines[self.selected+1])
       end
-      local loc = self.lines[self.selected].location
+      local loc = self.lines[self.selected+1].location
       -- open current buffer for file if it exists
       local buf = vim.api.nvim_eval("bufnr(\""..loc.path.."\")")
       window:close()
