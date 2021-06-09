@@ -61,7 +61,7 @@ function sylph:init(provider_name, filter_name)
     launched_from_name = vim.api.nvim_eval("expand(\"%\")"),
     query = "",
     running_proc = nil,
-    selected = 1,
+    selected = 0,
     lines = {}
   }
   -- Ensure window.launched_from_name is a string
@@ -70,6 +70,8 @@ function sylph:init(provider_name, filter_name)
   end
 
   function window:create()
+    self.inp = vim.api.nvim_create_buf(false, true)
+    vim.api.nvim_buf_set_name(self.inp, "__sylph_input")
     self.buf = vim.api.nvim_create_buf(false, true)
     vim.api.nvim_buf_set_name(self.buf, "__sylph")
 
@@ -79,18 +81,23 @@ function sylph:init(provider_name, filter_name)
     local margin_side = 20
     local current_width = vim.api.nvim_win_get_width(vim.api.nvim_get_current_win())
     self.width = math.min(math.max(80, current_width - margin_side * 2), 100)
-    self.win = vim.api.nvim_open_win(self.buf, true, {relative="win", row=margin_side, col=top, width=self.width, height=1, style="minimal"})
+    self.win = vim.api.nvim_open_win(self.buf, false, {relative="win", row=top, col=margin_side, width=self.width, height=1, style="minimal"})
+    self.inp_win = vim.api.nvim_open_win(self.inp, true, {relative="win", row=top-1, col=margin_side, width=self.width, height=1, style="minimal"})
 
     vim.api.nvim_buf_set_option(self.buf, "filetype", "sylph")
+    vim.api.nvim_buf_set_option(self.inp, "filetype", "sylph")
+    vim.api.nvim_buf_set_option(self.inp, "buftype", "prompt")
+    vim.api.nvim_buf_set_option(self.inp, "bufhidden", "wipe")
     vim.api.nvim_buf_set_option(self.buf, "bufhidden", "wipe")
+    vim.api.nvim_call_function("prompt_setprompt", {self.inp, ""})
     vim.api.nvim_command("startinsert!")
 
-    vim.api.nvim_buf_attach(self.buf, false, {on_lines=function(_, _, _, f, l) self:on_input(f,l) end})
+    vim.api.nvim_buf_attach(self.inp, false, {on_lines=function(_, _, _, f, l) self:on_input(f,l) end})
 
-    vim.api.nvim_buf_set_keymap(buf, "i", "<esc>", "<esc>:lua sylph:close_window()<CR>", {nowait=true,silent=true})
-    vim.api.nvim_buf_set_keymap(buf, "i", "<CR>", "<C-o>:lua sylph:enter()<CR>", {nowait=true,silent=true})
-    vim.api.nvim_buf_set_keymap(buf, "i", "<C-J>", "<C-o>:lua sylph:move(1)<CR>", {nowait=true,silent=true})
-    vim.api.nvim_buf_set_keymap(buf, "i", "<C-K>", "<C-o>:lua sylph:move(-1)<CR>", {nowait=true,silent=true})
+    vim.api.nvim_buf_set_keymap(self.inp, "i", "<esc>", "<C-[>:lua sylph:close_window()<CR>", {nowait=true,silent=true})
+    vim.api.nvim_buf_set_keymap(self.inp, "i", "<CR>", "<C-o>:lua sylph:enter()<CR>", {nowait=true,silent=true})
+    vim.api.nvim_buf_set_keymap(self.inp, "i", "<C-J>", "<C-[>:lua sylph:move(1)<CR>a", {nowait=true,silent=true,noremap=true})
+    vim.api.nvim_buf_set_keymap(self.inp, "i", "<C-K>", "<C-[>:lua sylph:move(-1)<CR>a", {nowait=true,silent=true,noremap=true})
 
     -- automatically close window when we loose focus
     vim.api.nvim_command("au WinLeave <buffer> :lua sylph:close_window()")
@@ -113,7 +120,7 @@ function sylph:init(provider_name, filter_name)
   function window:on_input(firstline, lastline)
     -- First line contains the users input, so we only check for changes there
     if firstline == 0 then
-      self.query = vim.api.nvim_buf_get_lines(self.buf, 0, 1, false)[1]
+      self.query = vim.api.nvim_buf_get_lines(self.inp, 0, 1, false)[1]
       if self.provider.run_on_input then
         if self.running_proc ~= nil then
           self.running_proc()
@@ -134,7 +141,7 @@ function sylph:init(provider_name, filter_name)
 
   function window:write_selected(selected)
     -- TODO: run in background thread
-    if output_file ~= nil and #self.stored_lines < 1000 then
+    if output_file ~= nil and #self.stored_lines < 100000 then
       vim.loop.fs_open(output_file, "a", 438, function(err, f)
         if err then
           print_err("Could not open output file for writing")
@@ -159,7 +166,7 @@ function sylph:init(provider_name, filter_name)
   function window:draw(lines)
     if lines ~= nil then
       self.lines = lines
-      self.selected = 1
+      self.selected = 0
       -- TODO: move to config
       local num_lines = math.min(10, #lines)
       local format = function(x)
@@ -181,8 +188,8 @@ function sylph:init(provider_name, filter_name)
       end
       vim.schedule(function()
         if self.buf ~= -1 then
-          vim.api.nvim_buf_set_lines(self.buf, 1, -1, false, formatted)
-          vim.api.nvim_win_set_height(self.win, num_lines+1)
+          vim.api.nvim_buf_set_lines(self.buf, 0, -1, false, formatted)
+          vim.api.nvim_win_set_height(self.win, num_lines)
           self:update_highlights()
         end
       end)
@@ -198,12 +205,12 @@ function sylph:init(provider_name, filter_name)
   end
 
   function window:move(dir)
-    self.selected = (((self.selected+dir)-1) % #self.lines) + 1
+    self.selected = (self.selected+dir) % #self.lines
     self:update_highlights()
   end
 
   function window:enter()
-    if self.selected > 0 and self.selected <= #self.lines then
+    if self.selected >= 0 and self.selected < #self.lines then
       self:write_selected(self.lines[self.selected])
       if self.filter.on_selected ~= nil then
         self.filter.on_selected(self.lines[self.selected])
@@ -229,12 +236,20 @@ function sylph:init(provider_name, filter_name)
   end
 
   function window:close()
-      vim.api.nvim_command("bw! "..self.buf)
+      if self.win ~= -1 then
+        vim.api.nvim_win_close(self.win, true)
+        self.win = -1
+      end
+      if self.inp_win ~= -1 then
+        vim.api.nvim_win_close(self.inp_win, true)
+        self.inp_win = -1
+      end
       window = nil
       if self.running_proc ~= nil then
         self.running_proc()
       end
       self.buf = -1
+      self.inp = -1
   end
 
   window:create()
