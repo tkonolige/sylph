@@ -9,6 +9,7 @@ local filterer = package.loadlib(d .. "../rust/target/release/libfilter." .. son
 local matcher = filterer.threaded_matcher()
 local timer = nil
 function handler(window, lines, query, callback)
+  -- local lines = vim.deepcopy(lines) -- Cache local lines because it may be updated
   local err = matcher:query(query, window.launched_from_name, 10, lines)
   if err ~= nil then
     sylph.print_err(err)
@@ -33,10 +34,12 @@ function handler(window, lines, query, callback)
       local matched_lines = {}
       for _, x in ipairs(res) do
         local l = lines[x.index+1]
-        l.frequency_score = x.frequency_score
-        l.context_score = x.context_score
-        l.query_score = x.query_score
-        matched_lines[#matched_lines+1] = l
+        if l ~= nil then
+          l.frequency_score = x.frequency_score
+          l.context_score = x.context_score
+          l.query_score = x.query_score
+          matched_lines[#matched_lines+1] = l
+        end
       end
       callback(matched_lines)
     end
