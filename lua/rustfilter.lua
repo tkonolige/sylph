@@ -20,6 +20,7 @@ function handler(window, lines, query, callback)
   local timer_callback
   timer_callback = function()
     if timer ~= nil then
+      timer:stop()
       timer:close()
       timer = nil
     end

@@ -122,15 +122,24 @@ function sylph:init(provider_name, filter_name)
     if firstline == 0 then
       self.query = vim.api.nvim_buf_get_lines(self.inp, 0, 1, false)[1]
       if self.provider.run_on_input then
-        if self.running_proc ~= nil then
-          self.running_proc()
-          self.running_proc = nil
+        -- schedule query to run after 100ms
+        if self.throttle ~= nil then
+          self.throttle:stop()
+          self.throttle:close()
+          self.throttle = nil
         end
-        self.running_proc = self.provider.handler(self, self.query,
-          function(lines)
-            self.stored_lines = lines
-            self.filter.handler(self, lines, self.query, function(lines) self:draw(lines) end)
-          end)
+        self.throttle = vim.defer_fn(function()
+          if self.running_proc ~= nil then
+            self.running_proc()
+            self.running_proc = nil
+          end
+          self.running_proc = self.provider.handler(self, self.query,
+            function(lines)
+              self.stored_lines = lines
+              self.filter.handler(self, lines, self.query, function(lines) self:draw(lines) end)
+            end)
+          self.throttle = nil
+        end, 100)
       else
         if self.stored_lines ~= nil then
           self.filter.handler(self, self.stored_lines, self.query, function(lines) self:draw(lines) end)
