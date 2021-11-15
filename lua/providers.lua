@@ -4,12 +4,12 @@ local util = require("util")
 local lsp_util = require('vim.lsp.util')
 local function lsp_handle(window, query, callback)
   local lines = {} -- We accumulate lines because there are multiple clients
-  local function h(err, method, params, client_id)
+  local function h(err, result, ctx, config)
     local cwd = vim.fn.getcwd()
     if err then
       sylph.print_err("LSP error: %s", err)
     else
-      for _,x in ipairs(params) do
+      for _,x in ipairs(result) do
         local protocol, path = x.location.uri:gmatch("([a-z]+)://(.+)")()
         if string.sub(path, 1, cwd:len()) == cwd then
           path = string.sub(path, cwd:len()+2)
