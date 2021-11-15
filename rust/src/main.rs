@@ -72,7 +72,7 @@ impl RequestHandler for EventHandler {
                 }
                 "selected" => {
                     let selected = JSONLine::from_value(&args[0])?;
-                    self.matcher.update(&selected.path);
+                    self.matcher.update(&selected.location.path);
                     Value::from(true)
                 }
                 f => Err(anyhow!("No such function {}.", f))?,
@@ -93,19 +93,24 @@ struct Opts {
 struct JSONLine {
     #[serde(alias = "name")]
     line: String,
+    location: Location,
+}
+
+#[derive(Deserialize)]
+struct Location {
     path: String,
 }
 
 impl JSONLine {
     pub fn from_value(val: &Value) -> Result<Self> {
-        let path = lookup(val, "path")?
+        let path = lookup(lookup(val, "location")?, "path")?
             .as_str()
             .ok_or(anyhow!("Key path is not a string."))?;
         let name = lookup(val, "name")?
             .as_str()
             .ok_or(anyhow!("Key name is not a string."))?;
         Ok(JSONLine {
-            path: path.to_string(),
+            location: Location{path:path.to_string()},
             line: name.to_string(),
         })
     }
@@ -113,7 +118,7 @@ impl JSONLine {
 
 impl Line for JSONLine {
     fn path(&self) -> &str {
-        self.path.as_str()
+        self.location.path.as_str()
     }
 
     fn line(&self) -> &str {
@@ -179,7 +184,7 @@ fn main() -> Result<()> {
                                 m.context_score,
                                 m.query_score,
                                 m.frequency_score,
-                                json.lines[m.index].path
+                                json.lines[m.index].location.path
                             );
                         }
                         println!(
