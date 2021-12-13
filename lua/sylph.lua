@@ -187,7 +187,7 @@ function sylph:init(provider_name, filter_name)
         else
           s = x.line .. string.rep(" ", width_left - x.line:len())
         end
-        return string.format("%s %5.2f %5.2f %5.2f", s, x.query_score, x.frequency_score, x.context_score)
+        return string.format("%s %5.1f %5.1f %5.1f", s, x.query_score, x.frequency_score, x.context_score)
       end
       local formatted = util.map(format, {unpack(lines, 1, num_lines)})
       for i,x in ipairs(formatted) do

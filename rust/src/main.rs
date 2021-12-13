@@ -110,7 +110,9 @@ impl JSONLine {
             .as_str()
             .ok_or(anyhow!("Key name is not a string."))?;
         Ok(JSONLine {
-            location: Location{path:path.to_string()},
+            location: Location {
+                path: path.to_string(),
+            },
             line: name.to_string(),
         })
     }

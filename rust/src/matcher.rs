@@ -115,18 +115,17 @@ impl Matcher {
                 0.
             };
         let query_score = if query.len() > 0 {
-            let whole_score =
-                self.skim_matcher.fuzzy_match(line, query)? as f64 / query.len() as f64;
-            // Try and find path delimiters
+            let whole_score = self.skim_matcher.fuzzy_match(line, query)? as f64;
+            // Try and find path delimiters, if we find one, then assume we are matching a path.
+            // We prioritize matching on the basename component of the path and fall back to the
+            // whole path match if the basename does not match the query.
             let slash = line.rfind('/');
             match slash {
                 None => whole_score,
-                Some(ind) => {
-                    self.skim_matcher
-                        .fuzzy_match(&line[ind..], query)
-                        .map_or(0., |x| x as f64 / query.len() as f64)
-                        + whole_score
-                }
+                Some(ind) => self
+                    .skim_matcher
+                    .fuzzy_match(&line[ind..], query)
+                    .map_or(whole_score, |x| x as f64),
             }
         } else {
             0.

@@ -1,8 +1,8 @@
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use filter::{Line, Matcher, Progress};
 use serde::Deserialize;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
-use criterion::{BenchmarkId, criterion_group, criterion_main, Criterion};
 
 #[derive(Deserialize)]
 struct Location {
@@ -64,9 +64,16 @@ fn incremental_bench(c: &mut Criterion) {
             }
         }
     }
-    c.bench_with_input(BenchmarkId::new("incremental", format!("batch 100 results 10 lines {}", total)), &items, |b, itms| {
-        b.iter(|| incremental(100, 5, itms));
-    });
+    c.bench_with_input(
+        BenchmarkId::new(
+            "incremental",
+            format!("batch 100 results 10 lines {}", total),
+        ),
+        &items,
+        |b, itms| {
+            b.iter(|| incremental(100, 5, itms));
+        },
+    );
 }
 
 criterion_group!(benches, incremental_bench);
