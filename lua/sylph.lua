@@ -231,14 +231,15 @@ function sylph:init(provider_name, filter_name)
       window:close()
       local cmd
       if buf ~= -1 then
-        cmd = ":b " .. buf
+        cmd = ":b +" .. loc.row .. " " .. buf
       else
-        cmd = ":e " .. loc.path
+        cmd = ":e +" .. loc.row .. " " .. loc.path
       end
       vim.schedule(function()
         vim.api.nvim_command(cmd)
         if loc.row ~= nil then
           vim.call("cursor", loc.row, loc.col)
+          -- center cursor in window
           vim.api.nvim_command("normal! zz")
         end
       end)
