@@ -1,7 +1,7 @@
 if exists('g:loaded_sylph')
   finish
 endif
-let g:loaded_colorizer = 1
+let g:loaded_sylph = 1
 
 lua require('sylph')
 
