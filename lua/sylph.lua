@@ -2,6 +2,7 @@ sylph = {} -- not local so we can all into this module from viml callbacks
 
 local json = require("json")
 local util = require("util")
+sylph.timer = require("timer")
 
 --------------------------------
 -- Globals
@@ -151,10 +152,14 @@ function sylph:init(provider_name, filter_name)
 
 		-- run initial provider
 		if not self.provider.run_on_input then
+      sylph.timer.start("provider")
 			self.running_proc = self.provider.handler(self, self.query, function(lines)
+        sylph.timer.stop("provider")
 				if lines ~= nil then
 					self.stored_lines = lines
+          sylph.timer.start("filter")
 					self.filter.handler(self, lines, self.query, function(lines)
+            sylph.timer.stop("filter")
 						self:draw(lines)
 					end)
 				end
@@ -178,9 +183,13 @@ function sylph:init(provider_name, filter_name)
 						self.running_proc()
 						self.running_proc = nil
 					end
+          sylph.timer.start("provider")
 					self.running_proc = self.provider.handler(self, self.query, function(lines)
+            sylph.timer.stop("provider")
 						self.stored_lines = lines
+            sylph.timer.start("filter")
 						self.filter.handler(self, lines, self.query, function(lines)
+              sylph.timer.stop("filter")
 							self:draw(lines)
 						end)
 					end)
@@ -188,7 +197,9 @@ function sylph:init(provider_name, filter_name)
 				end, 100)
 			else
 				if self.stored_lines ~= nil then
+          sylph.timer.start("filter")
 					self.filter.handler(self, self.stored_lines, self.query, function(lines)
+            sylph.timer.stop("filter")
 						self:draw(lines)
 					end)
 				end
