@@ -42,7 +42,7 @@ function sylph:init(provider_name, filter_name)
 	if provider == nil then
 		print_err(
 			"sylph: Error: provider %s not found. Available providers are %s",
-			name,
+			provider_name,
 			vim.inspect(util.keys(providers))
 		)
 		return
@@ -53,7 +53,11 @@ function sylph:init(provider_name, filter_name)
 	end
 	local filter = filters[filter_name]
 	if filter == nil then
-		print_err("sylph: Error: filter %s not found. Available filters are %s", name, vim.inspect(util.keys(filters)))
+		print_err(
+			"sylph: Error: filter %s not found. Available filters are %s",
+			filter_name,
+			vim.inspect(util.keys(filters))
+		)
 		return
 	end
 
