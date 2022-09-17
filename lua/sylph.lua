@@ -158,7 +158,7 @@ function sylph:init(provider_name, filter_name)
 				if lines ~= nil then
 					self.stored_lines = lines
           sylph.timer.start("filter")
-					self.filter.handler(self, lines, self.query, function(lines)
+					self.running_proc = self.filter.handler(self, lines, self.query, function(lines)
             sylph.timer.stop("filter")
 						self:draw(lines)
 					end)
@@ -188,7 +188,7 @@ function sylph:init(provider_name, filter_name)
             sylph.timer.stop("provider")
 						self.stored_lines = lines
             sylph.timer.start("filter")
-						self.filter.handler(self, lines, self.query, function(lines)
+						self.running_proc = self.filter.handler(self, lines, self.query, function(lines)
               sylph.timer.stop("filter")
 							self:draw(lines)
 						end)
@@ -198,7 +198,7 @@ function sylph:init(provider_name, filter_name)
 			else
 				if self.stored_lines ~= nil then
           sylph.timer.start("filter")
-					self.filter.handler(self, self.stored_lines, self.query, function(lines)
+					self.running_proc = self.filter.handler(self, self.stored_lines, self.query, function(lines)
             sylph.timer.stop("filter")
 						self:draw(lines)
 					end)
