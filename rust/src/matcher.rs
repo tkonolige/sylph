@@ -275,7 +275,7 @@ struct FrequencyCounter {
 impl FrequencyCounter {
     pub fn new() -> Result<Self> {
         Ok(FrequencyCounter {
-            cache: LruCache::new(20),
+            cache: LruCache::new(std::num::NonZeroUsize::new(20).unwrap()),
             clock: 0,
         })
     }

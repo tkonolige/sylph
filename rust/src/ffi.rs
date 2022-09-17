@@ -91,7 +91,7 @@ impl ThreadedMatcher {
                 })
                 .collect(),
             id: self.command_num,
-        });
+        }).unwrap();
     }
 
     fn get_result(&self) -> Option<Result<Vec<Match>>> {
