@@ -35,9 +35,6 @@ jobs:
         command: build
         args: --release --lib
         working-directory: rust
-    - name: Copy
-      run: cp rust/target/release/libfilter.dylib rust/target/release/libfilter.so
-      if: ${{ matrix.os == 'macos-latest' }}
     - name: Get release
       id: get_release
       uses: bruceadams/get-release@v1.2.2
@@ -50,6 +47,6 @@ jobs:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
         upload_url: ${{ steps.get_release.outputs.upload_url }}
-        asset_path: rust/target/release/libfilter.so
-        asset_name: ${{ matrix.os }}-libfilter.so
+        asset_path: rust/target/release/libfilter.${{ matrix.os == 'macos-latest' && 'dylib' || 'so'}}
+        asset_name: ${{ matrix.os }}-libfilter.${{ matrix.os == 'macos-latest' && 'dylib' || 'so'}}
         asset_content_type: application/octet-stream
