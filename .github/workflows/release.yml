@@ -36,7 +36,7 @@ jobs:
         command: build
         args: --manifest-path rust/Cargo.toml --release --lib -v
       env:
-        DYLD_LIBARARY_PATH: /usr/local/lib
+        DYLD_LIBRARY_PATH: /usr/local/lib
     - name: Copy
       run: cp rust/target/release/libfilter.dylib rust/target/release/libfilter.so
       if: ${{ matrix.os == 'macos-latest' }}
