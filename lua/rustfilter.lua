@@ -1,14 +1,26 @@
+local function file_exists(name)
+   local f=io.open(name,"r")
+   if f~=nil then io.close(f) return true else return false end
+end
+
 local d = debug.getinfo(1).source:match("@?(.*/)")
 local soname = "so"
 if io.popen("uname"):read() == "Darwin" then
 	soname = "dylib"
 end
-local filterer = package.loadlib(d .. "../rust/target/release/libfilter." .. soname, "luaopen_filter")()
+
+-- Load locally compiled filter plugin. If it doesn't exist, load a downloaded one.
+local filterer
+if file_exists(d .. "../rust/target/release/libfilter." .. soname) then
+  filterer = package.loadlib(d .. "../rust/target/release/libfilter." .. soname, "luaopen_filter")()
+else
+  filterer = package.loadlib(d .. "/libfilter." .. soname, "luaopen_filter")()
+end
 
 -- create matcher object
 local matcher = filterer.threaded_matcher()
 local timer = nil
-function handler(window, lines, query, callback)
+local function handler(window, lines, query, callback)
 	-- local lines = vim.deepcopy(lines) -- Cache local lines because it may be updated
 	local err = matcher:query(query, window.launched_from_name, 10, lines)
 	if err ~= nil then
@@ -48,7 +60,7 @@ function handler(window, lines, query, callback)
 	timer_callback()
 end
 
-function on_selected(line)
+local function on_selected(line)
 	matcher:update(line.location.path)
 end
 
