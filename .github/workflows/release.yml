@@ -36,7 +36,6 @@ jobs:
         command: build
         args: --release --lib
       working-directory: rust
-
     - name: Copy
       run: cp rust/target/release/libfilter.dylib rust/target/release/libfilter.so
       if: ${{ matrix.os == 'macos-latest' }}
