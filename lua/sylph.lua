@@ -20,9 +20,9 @@ local window -- need to store a reference to the shown window so we can set keym
 local output_file = vim.api.nvim_eval('expand("~/.cache/nvim/sylph.log")')
 
 local function print_err(fmt, ...)
-	args = { ... }
+	local args = { ... }
 	vim.schedule(function()
-		err_msg = (args == nil) and fmt or string.format(fmt, unpack(args))
+		local err_msg = (args == nil) and fmt or string.format(fmt, unpack(args))
 		-- Close window first so error message is displayed afterwards
 		sylph:close_window()
 		vim.api.nvim_err_writeln(string.format("Sylph error: %s", err_msg))
