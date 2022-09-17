@@ -1,8 +1,9 @@
 name: Build Binaries
 
 on:
-  release:
-    types: [created]
+  push
+  # release:
+  #   types: [created]
 
 jobs:
   release:
@@ -34,6 +35,10 @@ jobs:
       with:
         command: build
         args: --manifest-path rust/Cargo.toml --release
+      env:
+        LUA_INC: /usr/local/include/luajit-2.1
+        LUA_LIB: /usr/local/lib
+        LUA_LIB_NAME: luajit
     - name: Copy
       run: cp rust/target/release/libfilter.dylib rust/target/release/libfilter.so
       if: ${{ matrix.os == 'macos-latest' }}
