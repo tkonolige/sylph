@@ -31,7 +31,7 @@ jobs:
         make install MACOSX_DEPLOYMENT_TARGET=10.14
       if: ${{ matrix.os == 'macos-latest' }}
     - name: Build
-      uses: actions-rs/cargo@v1
+      uses: marcopolo/cargo@master
       with:
         command: build
         args: --release --lib
