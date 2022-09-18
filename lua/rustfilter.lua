@@ -13,8 +13,11 @@ end
 local filterer
 if file_exists(d .. "../rust/target/release/libfilter." .. soname) then
   filterer = package.loadlib(d .. "../rust/target/release/libfilter." .. soname, "luaopen_filter")()
-else
+elseif file_exists(d .. "/libfilter." .. soname) then
   filterer = package.loadlib(d .. "/libfilter." .. soname, "luaopen_filter")()
+else
+  sylph.print_err("Could not find filtering library. Either compile it from source or download it")
+  return
 end
 
 -- create matcher object

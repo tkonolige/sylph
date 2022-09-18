@@ -2,6 +2,7 @@ sylph = {} -- not local so we can all into this module from viml callbacks
 
 local json = require("json")
 local util = require("util")
+sylph.download = require("download")
 sylph.timer = require("timer")
 
 --------------------------------
