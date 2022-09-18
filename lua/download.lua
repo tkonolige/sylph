@@ -9,6 +9,7 @@ if io.popen("uname"):read() == "Darwin" then
 end
 
 download.download_from_github = function()
+  print("Downloading from github")
   local handle = io.popen("curl -sL https://github.com/tkonolige/sylph/releases/latest/download/" .. libname .. " --output " .. d .. "/libfilter." .. soname .. " 2>&1", "r")
   local result = handle:read("*a")
   handle:close()

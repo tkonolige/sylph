@@ -16,9 +16,8 @@ if file_exists(d .. "../rust/target/release/libfilter." .. soname) then
 elseif file_exists(d .. "/libfilter." .. soname) then
   filterer = package.loadlib(d .. "/libfilter." .. soname, "luaopen_filter")()
 else
-  print("Downloading filter library from github")
   sylph.download.download_from_github()
-  return
+  filterer = package.loadlib(d .. "/libfilter." .. soname, "luaopen_filter")()
 end
 
 -- create matcher object
