@@ -64,7 +64,7 @@ function sylph:init(provider_name, filter_name)
 	end
 
 	-- Window holds all information for the current fuzzy finder session
-	window = {
+	local window = {
 		provider = provider,
 		filter = filter,
 		launched_from = vim.api.nvim_eval('bufnr("%")'),
@@ -156,13 +156,12 @@ function sylph:init(provider_name, filter_name)
       sylph.timer.start("provider")
 			self.running_proc = self.provider.handler(self, self.query, function(lines)
         sylph.timer.stop("provider")
+        sylph.timer.statistic("provider", "time/line", function(t) return t/#lines end)
+        sylph.timer.statistic("provider", "lines", function(t) return #lines end)
 				if lines ~= nil then
-					self.stored_lines = lines
+          self.stored_lines = lines -- prevent on input handler from running until this one has run
           sylph.timer.start("filter")
-					self.running_proc = self.filter.handler(self, lines, self.query, function(lines)
-            sylph.timer.stop("filter")
-						self:draw(lines)
-					end)
+					self.running_proc = self.filter.handler(self, lines, self.query, function(matched_lines) sylph.window:lines_callback(matched_lines) end)
 				end
 			end)
 		end
@@ -187,26 +186,28 @@ function sylph:init(provider_name, filter_name)
           sylph.timer.start("provider")
 					self.running_proc = self.provider.handler(self, self.query, function(lines)
             sylph.timer.stop("provider")
+            sylph.timer.statistic("provider", "time/line", function(t) return t / #lines end)
+            sylph.timer.statistic("provider", "lines", function(t) return #lines end)
 						self.stored_lines = lines
             sylph.timer.start("filter")
-						self.running_proc = self.filter.handler(self, lines, self.query, function(lines)
-              sylph.timer.stop("filter")
-							self:draw(lines)
-						end)
+						self.running_proc = self.filter.handler(self, lines, self.query, function(matched_lines) self:lines_callback(matched_lines) end)
 					end)
 					self.throttle = nil
 				end, 100)
 			else
 				if self.stored_lines ~= nil then
           sylph.timer.start("filter")
-					self.running_proc = self.filter.handler(self, self.stored_lines, self.query, function(lines)
-            sylph.timer.stop("filter")
-						self:draw(lines)
-					end)
+					self.running_proc = self.filter.handler(self, self.stored_lines, self.query, function(matched_lines) self:lines_callback(matched_lines) end)
 				end
 			end
 		end
 	end
+
+  function window:lines_callback(matched_lines)
+    sylph.timer.stop("filter")
+    -- sylph.timer.statistic("filter", "time/line", function(t) return t/#self.stored_lines end)
+    self:draw(matched_lines)
+  end
 
 	function window:write_selected(selected)
 		-- TODO: run in background thread
@@ -337,17 +338,17 @@ function sylph:init(provider_name, filter_name)
 end
 
 function sylph:close_window()
-	if window ~= nil then
-		window:close()
+	if sylph.window ~= nil then
+		sylph.window:close()
 	end
 end
 
 function sylph:enter()
-	window:enter()
+	sylph.window:enter()
 end
 
 function sylph:move(dir)
-	window:move(dir)
+	sylph.window:move(dir)
 end
 
 function sylph:register_provider(name, initializer)

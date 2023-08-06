@@ -55,8 +55,10 @@ impl ThreadedMatcher {
                                 lines.as_slice(),
                             );
                             let mut progress = Progress::Working;
+                            // Process input in chunks, while checking for new commands. Stop
+                            // working if a new command is received.
                             while command_recv.len() == 0 && progress == Progress::Working {
-                                progress = inc_matcher.process(100)?;
+                                progress = inc_matcher.process(10000)?;
                             }
                             if let Progress::Done(results) = progress {
                                 result_send.send((id, Ok(results))).unwrap();

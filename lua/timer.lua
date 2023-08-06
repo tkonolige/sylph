@@ -17,6 +17,16 @@ function M.stop(name)
   end
 end
 
+function M.statistic(name, subname, func)
+  s = func(M.times[name][#M.times[name]])
+  n = name .. " " .. subname
+  if M.times[n] == nil then
+    M.times[n] = {s}
+  else
+    table.insert(M.times[n], s)
+  end
+end
+
 local function median(xs)
   if #xs % 2 == 1 then
     return xs[math.floor(#xs/2)+1]
