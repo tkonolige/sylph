@@ -24,7 +24,7 @@ end
 local matcher = filterer.threaded_matcher()
 local function handler(window, lines, query, callback)
 	-- local lines = vim.deepcopy(lines) -- Cache local lines because it may be updated
-	local err = matcher:query(query, window.launched_from_name, 10, lines)
+	local command_num, err = matcher:query(query, window.launched_from_name, 10, lines)
 	if err ~= nil then
 		sylph.print_err(err)
 		return
@@ -34,14 +34,22 @@ local function handler(window, lines, query, callback)
 
 	-- poll matcher to see if it has completed
 	local timer_callback = function()
-		local res, err = matcher:get_result()
+		local res, err = matcher:get_result(command_num)
 		if err ~= nil then
-			sylph.print_err(err)
+      if timer ~= nil then
+        timer:stop()
+        timer:close()
+        timer = nil
+      end
+			-- sylph.print_err(err)
 			return
 		end
 		if res ~= nil then
-      timer:stop()
-      timer:close()
+      if timer ~= nil then
+        timer:stop()
+        timer:close()
+        timer = nil
+      end
 			local matched_lines = {}
 			for _, x in ipairs(res) do
 				local l = lines[x.index + 1]
@@ -53,10 +61,19 @@ local function handler(window, lines, query, callback)
 				end
 			end
 			callback(matched_lines)
+    else
 		end
 	end
 
-  timer:start(5, 5, timer_callback)
+  timer:start(100, 100, timer_callback)
+
+  return function()
+    if timer ~= nil then
+      timer:stop()
+      timer:close()
+      timer = nil
+    end
+  end
 end
 
 local function on_selected(line)

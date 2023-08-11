@@ -5,6 +5,7 @@ use mlua::{UserData, Value};
 use std::thread;
 
 use super::matcher::*;
+use std::collections::HashMap;
 
 #[derive(Debug)]
 enum Command {
@@ -23,6 +24,7 @@ pub struct ThreadedMatcher {
     command_ch: Sender<Command>,
     result_ch: Receiver<(usize, Result<Vec<Match>>)>,
     command_num: usize,
+    alread_recvd: HashMap<usize, Result<Vec<Match>>>,
 }
 
 impl ThreadedMatcher {
@@ -76,32 +78,49 @@ impl ThreadedMatcher {
             command_ch: command_send,
             result_ch: result_recv,
             command_num: 0,
+            alread_recvd: HashMap::new(),
         }
     }
 
-    fn query<L: Line>(&mut self, query: &str, context: &str, num_results: usize, lines: &[L]) {
+    fn query<L: Line>(
+        &mut self,
+        query: &str,
+        context: &str,
+        num_results: usize,
+        lines: &[L],
+    ) -> usize {
         self.command_num += 1;
-        self.command_ch.send(Command::Query {
-            query: query.to_string(),
-            context: context.to_string(),
-            num_results,
-            lines: lines
-                .iter()
-                .map(|l| OwnedLine {
-                    path: l.path().to_string(),
-                    line: l.line().to_string(),
-                })
-                .collect(),
-            id: self.command_num,
-        }).unwrap();
+        self.command_ch
+            .send(Command::Query {
+                query: query.to_string(),
+                context: context.to_string(),
+                num_results,
+                lines: lines
+                    .iter()
+                    .map(|l| OwnedLine {
+                        path: l.path().to_string(),
+                        line: l.line().to_string(),
+                    })
+                    .collect(),
+                id: self.command_num,
+            })
+            .unwrap();
+        self.command_num
     }
 
-    fn get_result(&self) -> Option<Result<Vec<Match>>> {
+    fn get_result(&mut self, command_num: usize) -> Option<Result<Vec<Match>>> {
+        if self.alread_recvd.contains_key(&command_num) {
+            return self.alread_recvd.remove(&command_num);
+        }
         match self.result_ch.try_recv() {
             Ok((id, result)) => match id {
                 0 => Some(result),
-                i if i < self.command_num => self.get_result(),
-                i if i == self.command_num => Some(result),
+                i if i < command_num => self.get_result(command_num),
+                i if i == command_num => Some(result),
+                i if i > command_num => {
+                    self.alread_recvd.insert(i, result);
+                    Some(Err(anyhow!("expired command")))
+                }
                 _ => unreachable!(),
             },
             Err(TryRecvError::Disconnected) => Some(Err(anyhow!("Processing thread has died"))),
@@ -159,13 +178,16 @@ impl UserData for ThreadedMatcher {
         methods.add_method_mut("query", |_, this, vals| {
             let (query, context, num_results, lines): (String, String, usize, Vec<OwnedLine>) =
                 vals;
-            this.query(&query, &context, num_results, &lines);
-            Ok(())
+            let command_num = this.query(&query, &context, num_results, &lines);
+            Ok(command_num)
         });
-        methods.add_method("get_result", |lua, this, _: ()| match this.get_result() {
-            None => Ok((Value::Nil, Value::Nil)),
-            Some(Ok(mtchs)) => Ok((mtchs.to_lua(lua)?, Value::Nil)),
-            Some(Err(err)) => Ok((Value::Nil, err.to_string().to_lua(lua)?)),
+        methods.add_method_mut("get_result", |lua, this, vals| {
+            let (command_num,) = vals;
+            match this.get_result(command_num) {
+                None => Ok((Value::Nil, Value::Nil)),
+                Some(Ok(mtchs)) => Ok((mtchs.to_lua(lua)?, Value::Nil)),
+                Some(Err(err)) => Ok((Value::Nil, err.to_string().to_lua(lua)?)),
+            }
         });
         methods.add_method("update", |_, this, s| {
             let s: String = s;
