@@ -101,7 +101,7 @@ impl Matcher {
         // input, it matters less when the user has been explicit about what they want.
         let context_score = (query.len() as f64 * -0.5).exp()
             * if context.len() > 0 {
-                textdistance::nstr::sift4_simple(line, context) * 10.
+                0. //textdistance::nstr::levenshtein(line, context) * 10.
             } else {
                 0.
             };

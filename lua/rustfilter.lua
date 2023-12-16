@@ -65,7 +65,7 @@ local function handler(window, lines, query, callback)
 		end
 	end
 
-  timer:start(100, 100, timer_callback)
+  timer:start(10, 10, timer_callback)
 
   return function()
     if timer ~= nil then
