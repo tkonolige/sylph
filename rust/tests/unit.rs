@@ -30,7 +30,7 @@ struct Query {
 fn incremental_same_as_batch() {
     let file = File::open("tests/sylph.log").unwrap();
     let reader = BufReader::new(file);
-    let matcher = Matcher::new().unwrap();
+    let mut matcher = Matcher::new().unwrap();
     for line in reader.lines() {
         let l = line.unwrap();
         let sl = if &l[l.len() - 1..] == "\n" {

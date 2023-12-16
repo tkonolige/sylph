@@ -18,7 +18,8 @@ fuzzy-matcher = "*"
 neovim-lib = "*"
 anyhow = "*"
 itertools = "*"
-sublime_fuzzy = "*"
+nucleo-matcher = "*"
+textdistance = "*"
 structopt = "*"
 serde_json = "*"
 serde = { version = "*", features = ["derive"] }
@@ -26,7 +27,6 @@ binary-heap-plus = "*"
 crossbeam-channel = "*"
 mlua = { version = "*", features = ["luajit", "module"] }
 mlua_derive = "*"
-strsim = "0.10.0"
 lru = "*"
 
 [build-dependencies]

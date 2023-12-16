@@ -211,7 +211,7 @@ function sylph:init(provider_name, filter_name)
 
 	function window:write_selected(selected)
 		-- TODO: run in background thread
-		if output_file ~= nil and #self.stored_lines < 100000 then
+		if output_file ~= nil then
 			vim.loop.fs_open(output_file, "a", 438, function(err, f)
 				if err then
 					print_err("Could not open output file for writing")

@@ -33,7 +33,7 @@ struct Query {
 }
 
 fn incremental(batch_size: usize, num_results: u64, items: &Vec<Query>) {
-    let matcher = Matcher::new().unwrap();
+    let mut matcher = Matcher::new().unwrap();
     for json in items {
         let mut inc_matcher =
             matcher.incremental_match(&json.query, &json.launched_from, num_results, &json.lines);
@@ -45,7 +45,7 @@ fn incremental(batch_size: usize, num_results: u64, items: &Vec<Query>) {
 }
 
 fn incremental_bench(c: &mut Criterion) {
-    let file = File::open("tests/sylph.log").unwrap();
+    let file = File::open("/Users/tristan/.cache/nvim/sylph.log").unwrap();
     let reader = BufReader::new(file);
     let mut items = Vec::new();
     let mut total = 0;
@@ -64,16 +64,19 @@ fn incremental_bench(c: &mut Criterion) {
             }
         }
     }
-    c.bench_with_input(
+    let mut group = c.benchmark_group("Incremental");
+    group.throughput(criterion::Throughput::Elements(total as u64));
+    group.bench_with_input(
         BenchmarkId::new(
             "incremental",
-            format!("batch 100 results 10 lines {}", total),
+            format!("batch 1000 results 10 lines {}", total),
         ),
         &items,
         |b, itms| {
-            b.iter(|| incremental(100, 5, itms));
+            b.iter(|| incremental(1000, 10, itms));
         },
     );
+    group.finish();
 }
 
 criterion_group!(benches, incremental_bench);

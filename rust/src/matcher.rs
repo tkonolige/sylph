@@ -1,12 +1,9 @@
 use anyhow::{anyhow, Result};
 use binary_heap_plus::*;
-use fuzzy_matcher::skim::{SkimMatcherV2, SkimScoreConfig};
-use fuzzy_matcher::FuzzyMatcher;
 use itertools::process_results;
 use itertools::Itertools;
 use lru::LruCache;
 use neovim_lib::Value;
-use strsim::normalized_levenshtein;
 
 pub fn lookup<'a>(val: &'a Value, key: &str) -> Result<&'a Value> {
     let map: &Vec<(Value, Value)> =
@@ -74,22 +71,16 @@ impl Ord for Match {
 
 pub struct Matcher {
     frequency: FrequencyCounter,
-    skim_matcher: SkimMatcherV2,
+    skim_matcher: nucleo_matcher::Matcher,
 }
 
 impl Matcher {
     pub fn new() -> Result<Self> {
         Ok(Matcher {
             frequency: FrequencyCounter::new()?,
-            skim_matcher: SkimMatcherV2::default()
-                .use_cache(true)
-                .smart_case()
-                .score_config(SkimScoreConfig {
-                    gap_start: -8,
-                    gap_extension: -3,
-                    penalty_case_mismatch: 0,
-                    ..SkimScoreConfig::default()
-                }),
+            skim_matcher: nucleo_matcher::Matcher::new(
+                nucleo_matcher::Config::DEFAULT.match_paths(),
+            ),
         })
     }
 
@@ -98,7 +89,7 @@ impl Matcher {
     }
 
     pub fn score(
-        &self,
+        &mut self,
         query: &str,
         context: &str,
         index: usize,
@@ -110,21 +101,33 @@ impl Matcher {
         // input, it matters less when the user has been explicit about what they want.
         let context_score = (query.len() as f64 * -0.5).exp()
             * if context.len() > 0 {
-                normalized_levenshtein(line, context) * 10.
+                textdistance::nstr::sift4_simple(line, context) * 10.
             } else {
                 0.
             };
         let query_score = if query.len() > 0 {
-            let whole_score = self.skim_matcher.fuzzy_match(line, query)? as f64;
+            let mut buf = Vec::new();
+            let pattern = nucleo_matcher::pattern::Pattern::new(
+                query,
+                nucleo_matcher::pattern::CaseMatching::Ignore,
+                nucleo_matcher::pattern::AtomKind::Fuzzy,
+            );
+            // TODO: only do this match if we cant match basename
+            let whole_score = pattern.score(
+                nucleo_matcher::Utf32Str::new(line, &mut buf),
+                &mut self.skim_matcher,
+            )? as f64;
             // Try and find path delimiters, if we find one, then assume we are matching a path.
             // We prioritize matching on the basename component of the path and fall back to the
             // whole path match if the basename does not match the query.
             let slash = line.rfind('/');
             match slash {
                 None => whole_score,
-                Some(ind) => self
-                    .skim_matcher
-                    .fuzzy_match(&line[ind..], query)
+                Some(ind) => pattern
+                    .score(
+                        nucleo_matcher::Utf32Str::new(&line[ind..], &mut buf),
+                        &mut self.skim_matcher,
+                    )
                     .map_or(whole_score, |x| x as f64),
             }
         } else {
@@ -140,7 +143,7 @@ impl Matcher {
     }
 
     pub fn best_matches<L: Line>(
-        &self,
+        &mut self,
         query: &str,
         context: &str,
         num_results: u64,
@@ -182,7 +185,7 @@ impl Matcher {
     }
 
     pub fn incremental_match<'a, 'b, 'c, L: Line>(
-        &'b self,
+        &'b mut self,
         query: &'c str,
         context: &'c str,
         num_results: u64,
@@ -193,7 +196,7 @@ impl Matcher {
 }
 
 pub struct IncrementalMatcher<'a, 'b, 'c, L: Line> {
-    matcher: &'b Matcher,
+    matcher: &'b mut Matcher,
     query: &'c str,
     context: &'c str,
     lines: &'a [L],
@@ -210,7 +213,7 @@ pub enum Progress {
 
 impl<'a, 'b, 'c, L: Line> IncrementalMatcher<'a, 'b, 'c, L> {
     fn new(
-        matcher: &'b Matcher,
+        matcher: &'b mut Matcher,
         query: &'c str,
         context: &'c str,
         lines: &'a [L],
