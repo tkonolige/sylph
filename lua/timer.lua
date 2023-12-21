@@ -4,16 +4,18 @@ M.timers = {}
 M.times = {}
 
 function M.start(name)
-  M.timers[name] = os.clock()
+  M.timers[name] = vim.fn.reltimefloat(vim.fn.reltime())
 end
 
 function M.stop(name)
-  local t = os.clock() - M.timers[name]
-  M.timers[name] = nil
-  if M.times[name] == nil then
-    M.times[name] = {t}
-  else
-    table.insert(M.times[name], t)
+  if M.timers[name] ~= nil then
+    local t = vim.fn.reltimefloat(vim.fn.reltime()) - M.timers[name]
+    M.timers[name] = nil
+    if M.times[name] == nil then
+      M.times[name] = {t}
+    else
+      table.insert(M.times[name], t)
+    end
   end
 end
 

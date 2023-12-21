@@ -153,6 +153,7 @@ function sylph:init(provider_name, filter_name)
 
 		-- run initial provider
 		if not self.provider.run_on_input then
+      sylph.timer.start("all")
       sylph.timer.start("provider")
 			self.running_proc = self.provider.handler(self, self.query, function(lines)
         sylph.timer.stop("provider")
@@ -170,6 +171,7 @@ function sylph:init(provider_name, filter_name)
 	function window:on_input(firstline, lastline)
 		-- First line contains the users input, so we only check for changes there
 		if firstline == 0 then
+      sylph.timer.start("all")
 			self.query = vim.api.nvim_buf_get_lines(self.inp, 0, 1, false)[1]
 			if self.provider.run_on_input then
 				-- schedule query to run after 100ms
@@ -237,6 +239,7 @@ function sylph:init(provider_name, filter_name)
 
 	function window:draw(lines)
 		if lines ~= nil then
+      sylph.timer.start("draw")
 			self.lines = lines
 			self.selected = 0
 			-- TODO: move to config
@@ -263,6 +266,8 @@ function sylph:init(provider_name, filter_name)
 					vim.api.nvim_buf_set_lines(self.buf, 0, -1, false, formatted)
 					vim.api.nvim_win_set_height(self.win, num_lines)
 					self:update_highlights()
+          sylph.timer.stop("draw")
+          sylph.timer.stop("all")
 				end
 			end)
 		end
