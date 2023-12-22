@@ -52,6 +52,8 @@ end
 sylph:register_provider("lsp", { handler = lsp_handle, run_on_input = true })
 
 -- Helper to create a providers from the output of a terminal command
+-- Accumulates all results of the running process before passing results to the callback.
+-- TODO: buffer data until newline and incrementally process lines
 function sylph:process(process_name, args, postprocess)
 	return function(window, query, callback)
 		local uv = vim.loop
@@ -60,7 +62,6 @@ function sylph:process(process_name, args, postprocess)
 		local stdin = uv.new_pipe(false)
 		local lines = {}
 
-		-- TODO: buffer data until newline
 		function onread(err, chunk)
 			assert(not err, err)
 			if chunk then
