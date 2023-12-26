@@ -142,8 +142,8 @@ impl Matcher {
         })
     }
 
-    pub fn best_matches<L: Line>(
-        &mut self,
+    pub fn best_matches<'a, L: Line>(
+        &'a mut self,
         query: &str,
         context: &str,
         num_results: u64,
@@ -184,22 +184,21 @@ impl Matcher {
             .collect::<Vec<_>>())
     }
 
-    pub fn incremental_match<'a, 'b, 'c, L: Line>(
-        &'b mut self,
-        query: &'c str,
-        context: &'c str,
+    pub fn incremental_match<L: Line>(
+        &mut self,
+        query: String,
+        context: String,
         num_results: u64,
-        lines: &'a [L],
-    ) -> IncrementalMatcher<'a, 'b, 'c, L> {
-        IncrementalMatcher::new(self, query, context, lines, num_results as usize)
+    ) -> IncrementalMatcher<L> {
+        IncrementalMatcher::new(self, query, context, num_results as usize)
     }
 }
 
-pub struct IncrementalMatcher<'a, 'b, 'c, L: Line> {
-    matcher: &'b mut Matcher,
-    query: &'c str,
-    context: &'c str,
-    lines: &'a [L],
+pub struct IncrementalMatcher<'a, L: Line> {
+    matcher: &'a mut Matcher,
+    query: String,
+    context: String,
+    lines: Vec<L>,
     progressed_to: usize,
     results: BinaryHeap<Match, MinComparator>,
     num_results: usize,
@@ -211,23 +210,21 @@ pub enum Progress {
     Done(Vec<Match>),
 }
 
-impl<'a, 'b, 'c, L: Line> IncrementalMatcher<'a, 'b, 'c, L> {
-    fn new(
-        matcher: &'b mut Matcher,
-        query: &'c str,
-        context: &'c str,
-        lines: &'a [L],
-        num_results: usize,
-    ) -> Self {
+impl<'a, L: Line> IncrementalMatcher<'a, L> {
+    fn new(matcher: &'a mut Matcher, query: String, context: String, num_results: usize) -> Self {
         IncrementalMatcher {
             matcher,
             query,
             context,
-            lines,
+            lines: Vec::new(),
             progressed_to: 0,
             results: BinaryHeap::<Match, MinComparator>::with_capacity_min(num_results),
             num_results,
         }
+    }
+
+    pub fn feed_lines(&mut self, mut lines: Vec<L>) {
+        self.lines.append(&mut lines);
     }
 
     pub fn process(&mut self, num_lines: usize) -> Result<Progress> {
@@ -237,8 +234,8 @@ impl<'a, 'b, 'c, L: Line> IncrementalMatcher<'a, 'b, 'c, L> {
 
         let ending_progressed_to = (self.progressed_to + num_lines).min(self.lines.len());
         let new_matches = self.matcher.best_matches(
-            self.query,
-            self.context,
+            &self.query,
+            &self.context,
             self.num_results as u64,
             &self.lines[self.progressed_to..ending_progressed_to],
         )?;

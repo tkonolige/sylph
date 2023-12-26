@@ -155,15 +155,17 @@ function sylph:init(provider_name, filter_name)
     if not self.provider.run_on_input then
       sylph.timer.start("all")
       sylph.timer.start("provider")
-      self.running_proc = self.provider.handler(self, self.query, function(lines)
+      local matcher = self.filter.handler(self, self.query,
+        function(matched_lines)
+          sylph.window:lines_callback(matched_lines)
+        end)
+      self.filter_stop = function() matcher:exit() end
+      self.provider_stop = self.provider.handler(self, self.query, matcher, function(lines)
         sylph.timer.stop("provider")
         sylph.timer.statistic("provider", "time/line", function(t) return t / #lines end)
         sylph.timer.statistic("provider", "lines", function(t) return #lines end)
         if lines ~= nil then
           self.stored_lines = lines -- prevent on input handler from running until this one has run
-          sylph.timer.start("filter")
-          self.running_proc = self.filter.handler(self, lines, self.query,
-            function(matched_lines) sylph.window:lines_callback(matched_lines) end)
         end
       end)
     end
@@ -182,27 +184,34 @@ function sylph:init(provider_name, filter_name)
           self.throttle = nil
         end
         self.throttle = vim.defer_fn(function()
-          if self.running_proc ~= nil then
-            self.running_proc()
-            self.running_proc = nil
+          if self.provider_stop ~= nil then
+            self.provider_stop()
+            self.provider_stop = nil
           end
           sylph.timer.start("provider")
-          self.running_proc = self.provider.handler(self, self.query, function(lines)
+          local matcher = self.filter.handler(self, self.query,
+            function(matched_lines)
+              sylph.window:lines_callback(matched_lines)
+            end)
+          self.filter_stop = function() matcher:exit() end
+          self.provider_stop = self.provider.handler(self, self.query, matcher, function(lines)
             sylph.timer.stop("provider")
             sylph.timer.statistic("provider", "time/line", function(t) return t / #lines end)
             sylph.timer.statistic("provider", "lines", function(t) return #lines end)
             self.stored_lines = lines
             sylph.timer.start("filter")
-            self.running_proc = self.filter.handler(self, lines, self.query,
-              function(matched_lines) self:lines_callback(matched_lines) end)
           end)
           self.throttle = nil
         end, 100)
       else
         if self.stored_lines ~= nil then
           sylph.timer.start("filter")
-          self.running_proc = self.filter.handler(self, self.stored_lines, self.query,
-            function(matched_lines) self:lines_callback(matched_lines) end)
+          local matcher = self.filter.handler(self, self.query,
+            function(matched_lines)
+              sylph.window:lines_callback(matched_lines)
+            end)
+          matcher:feed(self.stored_lines)
+          matcher:done()
         end
       end
     end
@@ -333,8 +342,11 @@ function sylph:init(provider_name, filter_name)
       self.inp_win = -1
     end
     window = nil
-    if self.running_proc ~= nil then
-      self.running_proc()
+    if self.provider_stop ~= nil then
+      self.provider_stop()
+    end
+    if self.filter_stop ~= nil then
+      self.filter_stop()
     end
     self.buf = -1
     self.inp = -1

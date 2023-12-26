@@ -13,10 +13,14 @@ enum Command {
         query: String,
         context: String,
         num_results: usize,
-        lines: Vec<OwnedLine>,
         id: usize,
     },
+    // Pass more lines to a query
+    Feed(Vec<OwnedLine>),
+    // Mark a given string as chosen, increases score for this string
     Update(String),
+    // Finish this query, return results
+    Done,
 }
 
 /// Object holding a matcher running in a separate thread
@@ -40,36 +44,62 @@ impl ThreadedMatcher {
                     return;
                 }
             };
+            let mut next_cmd = Some(command_recv.recv().unwrap());
             loop {
-                match command_recv.recv().unwrap() {
+                let cmd = if next_cmd.is_none() {
+                    command_recv.recv().unwrap()
+                } else {
+                    next_cmd.take().unwrap()
+                };
+                match cmd {
                     Command::Query {
                         query,
                         context,
                         num_results,
-                        lines,
                         id,
                     } => {
                         let r: Result<()> = try {
-                            let mut inc_matcher = matcher.incremental_match(
-                                &query,
-                                &context,
-                                num_results as u64,
-                                lines.as_slice(),
-                            );
-                            let mut progress = Progress::Working;
+                            let mut inc_matcher =
+                                matcher.incremental_match(query, context, num_results as u64);
                             // Process input in chunks, while checking for new commands. Stop
                             // working if a new command is received.
-                            while command_recv.len() == 0 && progress == Progress::Working {
-                                progress = inc_matcher.process(10000)?;
-                            }
-                            if let Progress::Done(results) = progress {
-                                result_send.send((id, Ok(results))).unwrap();
+                            loop {
+                                inc_matcher.process(10000)?;
+
+                                match command_recv.recv().unwrap() {
+                                    // Any update or query command starts a new set of processing
+                                    a @ (Command::Query { .. } | Command::Update { .. }) => {
+                                        next_cmd = Some(a);
+                                        break;
+                                    }
+                                    Command::Feed(lines) => inc_matcher.feed_lines(lines),
+                                    Command::Done => {
+                                        let mut progress = Progress::Working;
+                                        while command_recv.len() == 0
+                                            && progress == Progress::Working
+                                        {
+                                            progress = inc_matcher.process(10000)?;
+                                        }
+                                        if let Progress::Done(results) = progress {
+                                            result_send.send((id, Ok(results))).unwrap();
+                                        }
+                                        // Always break because we have already finished or a new
+                                        // command is received.
+                                        break;
+                                    }
+                                }
                             }
                         };
                         if let Err(err) = r {
                             result_send.send((id, Err(err))).unwrap();
                         }
                     }
+                    Command::Feed(_) => result_send
+                        .send((0, Err(anyhow!("Initialize query before feeding lines"))))
+                        .unwrap(),
+                    Command::Done => result_send
+                        .send((0, Err(anyhow!("Initialize query before sending done"))))
+                        .unwrap(),
                     Command::Update(path) => matcher.update(&path),
                 }
             }
@@ -82,36 +112,42 @@ impl ThreadedMatcher {
         }
     }
 
-    fn query<L: Line>(
-        &mut self,
-        query: &str,
-        context: &str,
-        num_results: usize,
-        lines: &[L],
-    ) -> usize {
+    fn query<L: Line>(&mut self, query: &str, context: &str, num_results: usize) -> usize {
         self.command_num += 1;
         self.command_ch
             .send(Command::Query {
                 query: query.to_string(),
                 context: context.to_string(),
                 num_results,
-                lines: lines
-                    .iter()
-                    .map(|l| OwnedLine {
-                        path: l.path().to_string(),
-                        line: l.line().to_string(),
-                    })
-                    .collect(),
                 id: self.command_num,
             })
             .unwrap();
         self.command_num
     }
 
+    fn feed<L: Line>(&mut self, lines: &[L]) {
+        self.command_ch
+            .send(Command::Feed(
+                lines
+                    .iter()
+                    .map(|l| OwnedLine {
+                        path: l.path().to_string(),
+                        line: l.line().to_string(),
+                    })
+                    .collect(),
+            ))
+            .unwrap();
+    }
+
+    fn done(&mut self) {
+        self.command_ch.send(Command::Done).unwrap();
+    }
+
     fn get_result(&mut self, command_num: usize) -> Option<Result<Vec<Match>>> {
         if self.alread_recvd.contains_key(&command_num) {
             return self.alread_recvd.remove(&command_num);
         }
+        // Tell the matcher that we are done
         match self.result_ch.try_recv() {
             Ok((id, result)) => match id {
                 0 => Some(result),
@@ -176,10 +212,17 @@ impl<'lua> ToLua<'lua> for Match {
 impl UserData for ThreadedMatcher {
     fn add_methods<'lua, M: LuaUserDataMethods<'lua, Self>>(methods: &mut M) {
         methods.add_method_mut("query", |_, this, vals| {
-            let (query, context, num_results, lines): (String, String, usize, Vec<OwnedLine>) =
-                vals;
-            let command_num = this.query(&query, &context, num_results, &lines);
+            let (query, context, num_results): (String, String, usize) = vals;
+            let command_num = this.query::<OwnedLine>(&query, &context, num_results);
             Ok(command_num)
+        });
+        methods.add_method_mut("feed", |_, this, lines: Vec<OwnedLine>| {
+            this.feed(&lines);
+            Ok(())
+        });
+        methods.add_method_mut("done", |_, this, _: ()| {
+            this.done();
+            Ok(())
         });
         methods.add_method_mut("get_result", |lua, this, vals| {
             let (command_num,) = vals;

@@ -1,3 +1,4 @@
+local util = require("./util")
 local function file_exists(name)
   local f = io.open(name, "r")
   if f ~= nil then
@@ -27,58 +28,67 @@ end
 
 -- create matcher object
 local matcher = filterer.threaded_matcher()
-local function handler(window, lines, query, callback)
+local function handler(window, query, callback)
   -- local lines = vim.deepcopy(lines) -- Cache local lines because it may be updated
-  local command_num, err = matcher:query(query, window.launched_from_name, 10, lines)
+  local command_num, err = matcher:query(query, window.launched_from_name, 10)
   if err ~= nil then
     sylph.print_err(err)
     return
   end
 
-  local timer = vim.loop.new_timer()
+  return {
+    lines = {},
+    feed = function(self, lines)
+      util.append(self.lines, lines)
+      matcher:feed(lines)
+    end,
+    done = function(self)
+      matcher:done()
+      self.timer = vim.loop.new_timer()
 
-  -- poll matcher to see if it has completed
-  local timer_callback = function()
-    local res, err = matcher:get_result(command_num)
-    if err ~= nil then
-      if timer ~= nil then
-        timer:stop()
-        timer:close()
-        timer = nil
-      end
-      -- sylph.print_err(err)
-      return
-    end
-    if res ~= nil then
-      if timer ~= nil then
-        timer:stop()
-        timer:close()
-        timer = nil
-      end
-      local matched_lines = {}
-      for _, x in ipairs(res) do
-        local l = lines[x.index + 1]
-        if l ~= nil then
-          l.frequency_score = x.frequency_score
-          l.context_score = x.context_score
-          l.query_score = x.query_score
-          matched_lines[#matched_lines + 1] = l
+      -- poll matcher to see if it has completed
+      local timer_callback = function()
+        local res, err = matcher:get_result(command_num)
+        if err ~= nil then
+          if self.timer ~= nil then
+            self.timer:stop()
+            self.timer:close()
+            self.timer = nil
+          end
+          -- sylph.print_err(err)
+          return
+        end
+        if res ~= nil then
+          if self.timer ~= nil then
+            self.timer:stop()
+            self.timer:close()
+            self.timer = nil
+          end
+          local matched_lines = {}
+          for _, x in ipairs(res) do
+            local l = self.lines[x.index + 1]
+            if l ~= nil then
+              l.frequency_score = x.frequency_score
+              l.context_score = x.context_score
+              l.query_score = x.query_score
+              matched_lines[#matched_lines + 1] = l
+            end
+          end
+          callback(matched_lines)
+        else
         end
       end
-      callback(matched_lines)
-    else
-    end
-  end
 
-  timer:start(10, 10, timer_callback)
-
-  return function()
-    if timer ~= nil then
-      timer:stop()
-      timer:close()
-      timer = nil
+      self.timer:start(10, 10, timer_callback)
+    end,
+    exit = function(self)
+      if self.timer ~= nil then
+        self.timer:stop()
+        self.timer:close()
+        self.timer = nil
+      end
     end
-  end
+  }
 end
 
 local function on_selected(line)
