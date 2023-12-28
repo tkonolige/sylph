@@ -45,7 +45,8 @@ fn incremental_same_as_batch() {
                     .best_matches(&json.query, &json.launched_from, 5, &json.lines)
                     .unwrap();
                 let mut inc_matcher =
-                    matcher.incremental_match(&json.query, &json.launched_from, 5, &json.lines);
+                    matcher.incremental_match(json.query, json.launched_from, 5);
+                inc_matcher.feed_lines(json.lines);
                 let mut progress = inc_matcher.process(10).unwrap();
                 while progress == Progress::Working {
                     progress = inc_matcher.process(10).unwrap();
