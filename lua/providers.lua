@@ -1,38 +1,52 @@
+-- Providers for lsp, grep, and files
+--
+-- The handler for each provider takes a window, query, matcher, and finished function.
+-- Call `matcher:feed(lines)` to incrementally provide lines to the filter/matcher.
+-- Call `matcher:done()` and `finished(lines)` when all lines have been collected.
 local util = require("util")
 
 -- Provider for the built in neovim lsp server
 local lsp_util = require("vim.lsp.util")
-local function lsp_handle(window, query, callback)
-  local lines = {} -- We accumulate lines because there are multiple clients
-  local function h(err, result, ctx, config)
-    local cwd = vim.fn.getcwd()
-    if err then
-      sylph.print_err("LSP error: %s", err)
-    else
-      for _, x in ipairs(result) do
-        local protocol, path = x.location.uri:gmatch("([a-z]+)://(.+)")()
-        if string.sub(path, 1, cwd:len()) == cwd then
-          path = string.sub(path, cwd:len() + 2)
-        end
-        local col = x.location.range.start.character + 1
-        local row = x.location.range.start.line + 1
-        lines[#lines + 1] = {
-          line = string.format("%s:%d:%d: %s", path, row, col, x.name),
-          location = {
-            path = path,
-            col = col,
-            row = row,
-          },
-        }
-      end
-      callback(lines)
-    end
-  end
-
+local function lsp_handle(window, query, matcher, finished)
   local clients = vim.lsp.get_active_clients()
   if #clients == 0 then
     sylph.print_err("There are currently no running LSP clients")
   end
+  local num_requests = #clients
+
+  local lines = {} -- We accumulate lines because there are multiple clients
+  local function h(err, result, ctx, config)
+    local cwd = vim.fn.getcwd()
+    num_requests = num_requests - 1
+    if err then
+      sylph.print_err("LSP error: %s", err)
+    else
+      if result ~= nil then
+        for _, x in ipairs(result) do
+          local protocol, path = x.location.uri:gmatch("([a-z]+)://(.+)")()
+          if string.sub(path, 1, cwd:len()) == cwd then
+            path = string.sub(path, cwd:len() + 2)
+          end
+          local col = x.location.range.start.character + 1
+          local row = x.location.range.start.line + 1
+          lines[#lines + 1] = {
+            line = string.format("%s:%d:%d: %s", path, row, col, x.name),
+            location = {
+              path = path,
+              col = col,
+              row = row,
+            },
+          }
+        end
+      end
+    end
+    if num_requests == 0 then
+      matcher:feed(lines)
+      matcher:done()
+      finished(lines)
+    end
+  end
+
   local cancels = {}
   for _, lsp in ipairs(clients) do
     local status, id = lsp.request("workspace/symbol", { query = query }, h)
@@ -59,7 +73,6 @@ function sylph:process(process_name, args, postprocess)
     local uv = vim.loop
     local stdout = uv.new_pipe(false)
     local stderr = uv.new_pipe(false)
-    local stdin = uv.new_pipe(false)
     local lines = {}
 
     local function onread(err, chunk)
@@ -97,7 +110,7 @@ function sylph:process(process_name, args, postprocess)
     args_[#args_ + 1] = query
     local handle
     local pid
-    handle, pid = uv.spawn(process_name, { args = args_, stdio = { stdin, stdout, stderr } }, onexit)
+    handle, pid = uv.spawn(process_name, { args = args_, stdio = { nil, stdout, stderr } }, onexit)
     if pid == nil then
       sylph.print_err("sylph. Error running command %s: %s", args_, handle)
     end
