@@ -6,7 +6,6 @@
 local util = require("util")
 
 -- Provider for the built in neovim lsp server
-local lsp_util = require("vim.lsp.util")
 local function lsp_handle(window, query, matcher, finished)
   local clients = vim.lsp.get_active_clients()
   if #clients == 0 then
