@@ -199,14 +199,14 @@ impl<'lua> FromLua<'lua> for OwnedLine {
     }
 }
 
-impl<'lua> ToLua<'lua> for Match {
-    fn to_lua(self, lua: &'lua Lua) -> mlua::Result<Value<'lua>> {
+impl<'lua> IntoLua<'lua> for Match {
+    fn into_lua(self, lua: &'lua Lua) -> mlua::Result<Value<'lua>> {
         let x = vec![
-            ("index", self.index.to_lua(lua)?),
-            ("score", self.score.to_lua(lua)?),
-            ("context_score", self.context_score.to_lua(lua)?),
-            ("query_score", self.query_score.to_lua(lua)?),
-            ("frequency_score", self.frequency_score.to_lua(lua)?),
+            ("index", self.index.into_lua(lua)?),
+            ("score", self.score.into_lua(lua)?),
+            ("context_score", self.context_score.into_lua(lua)?),
+            ("query_score", self.query_score.into_lua(lua)?),
+            ("frequency_score", self.frequency_score.into_lua(lua)?),
         ];
         lua.create_table_from(x.into_iter())
             .map(|x| Value::Table(x))
@@ -232,8 +232,8 @@ impl UserData for ThreadedMatcher {
             let (command_num,) = vals;
             match this.get_result(command_num) {
                 None => Ok((Value::Nil, Value::Nil)),
-                Some(Ok(mtchs)) => Ok((mtchs.to_lua(lua)?, Value::Nil)),
-                Some(Err(err)) => Ok((Value::Nil, err.to_string().to_lua(lua)?)),
+                Some(Ok(mtchs)) => Ok((mtchs.into_lua(lua)?, Value::Nil)),
+                Some(Err(err)) => Ok((Value::Nil, err.to_string().into_lua(lua)?)),
             }
         });
         methods.add_method("update", |_, this, s| {

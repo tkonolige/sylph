@@ -110,6 +110,7 @@ impl Matcher {
             let pattern = nucleo_matcher::pattern::Pattern::new(
                 query,
                 nucleo_matcher::pattern::CaseMatching::Ignore,
+                nucleo_matcher::pattern::Normalization::Smart,
                 nucleo_matcher::pattern::AtomKind::Fuzzy,
             );
             // TODO: only do this match if we cant match basename
