@@ -4,6 +4,7 @@ local json = require("json")
 local util = require("util")
 sylph.download = require("download")
 sylph.timer = require("timer")
+sylph.config = { num_lines = 10, debug = false, margin_side = 10 }
 
 --------------------------------
 -- Globals
@@ -88,18 +89,18 @@ function sylph:init(provider_name, filter_name)
     -- Set the window size and location
     local current_height = vim.api.nvim_win_get_height(vim.api.nvim_get_current_win())
     local top = math.floor((current_height - 10) * 0.4)
-    local margin_side = 20
     local current_width = vim.api.nvim_win_get_width(vim.api.nvim_get_current_win())
-    self.width = math.min(math.max(80, current_width - margin_side * 2), 100)
+    self.width = math.min(math.max(80, current_width - sylph.config.margin_side * 2), 100)
     self.win = vim.api.nvim_open_win(
       self.buf,
       false,
-      { relative = "win", row = top, col = margin_side, width = self.width, height = 1, style = "minimal" }
+      { relative = "win", row = top, col = sylph.config.margin_side, width = self.width, height = 1, style = "minimal" }
     )
     self.inp_win = vim.api.nvim_open_win(
       self.inp,
       true,
-      { relative = "win", row = top - 1, col = margin_side, width = self.width, height = 1, style = "minimal" }
+      { relative = "win", row = top - 1, col = sylph.config.margin_side, width = self.width, height = 1,
+        style = "minimal" }
     )
 
     vim.api.nvim_buf_set_option(self.buf, "filetype", "sylph")
@@ -255,9 +256,9 @@ function sylph:init(provider_name, filter_name)
       self.lines = lines
       self.selected = 0
       -- TODO: move to config
-      local num_lines = math.min(10, #lines)
+      local num_lines = math.min(sylph.config.num_lines, #lines)
       local format = function(x)
-        local width_left = math.max(self.width - 18, 0)
+        local width_left = math.max(self.width - (sylph.config.debug and 18 or 0), 0)
         -- Manual pad string because format cannot handle long string formats
         local s
         if x.line:len() > width_left then
@@ -265,7 +266,11 @@ function sylph:init(provider_name, filter_name)
         else
           s = x.line .. string.rep(" ", width_left - x.line:len())
         end
-        return string.format("%s %5.1f %5.1f %5.1f", s, x.query_score, x.frequency_score, x.context_score)
+        if sylph.config.debug then
+          return string.format("%s %5.1f %5.1f %5.1f", s, x.query_score, x.frequency_score, x.context_score)
+        else
+          return s
+        end
       end
       local formatted = util.map(format, { unpack(lines, 1, num_lines) })
       for i, x in ipairs(formatted) do
