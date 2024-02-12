@@ -1,5 +1,3 @@
-#![feature(try_blocks)]
-
 extern crate anyhow;
 extern crate binary_heap_plus;
 extern crate crossbeam_channel;

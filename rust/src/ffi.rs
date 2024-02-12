@@ -58,40 +58,44 @@ impl ThreadedMatcher {
                         num_results,
                         id,
                     } => {
-                        let r: Result<()> = try {
-                            let mut inc_matcher =
-                                matcher.incremental_match(query, context, num_results as u64);
-                            // Process input in chunks, while checking for new commands. Stop
-                            // working if a new command is received.
-                            loop {
-                                inc_matcher.process(10000)?;
+                        let mut inc_matcher =
+                            matcher.incremental_match(query, context, num_results as u64);
+                        // Process input in chunks, while checking for new commands. Stop
+                        // working if a new command is received.
+                        loop {
+                            if let Err(err) = inc_matcher.process(10000) {
+                                result_send.send((id, Err(err))).unwrap();
+                                break;
+                            }
 
-                                match command_recv.recv().unwrap() {
-                                    // Any update or query command starts a new set of processing
-                                    a @ (Command::Query { .. } | Command::Update { .. }) => {
-                                        next_cmd = Some(a);
-                                        break;
-                                    }
-                                    Command::Feed(lines) => inc_matcher.feed_lines(lines),
-                                    Command::Done => {
-                                        let mut progress = Progress::Working;
-                                        while command_recv.len() == 0
-                                            && progress == Progress::Working
-                                        {
-                                            progress = inc_matcher.process(10000)?;
+                            match command_recv.recv().unwrap() {
+                                // Any update or query command starts a new set of processing
+                                a @ (Command::Query { .. } | Command::Update { .. }) => {
+                                    next_cmd = Some(a);
+                                    break;
+                                }
+                                Command::Feed(lines) => inc_matcher.feed_lines(lines),
+                                Command::Done => {
+                                    let mut progress = Progress::Working;
+                                    while command_recv.len() == 0 && progress == Progress::Working {
+                                        match inc_matcher.process(10000) {
+                                            Err(err) => {
+                                                result_send.send((id, Err(err))).unwrap();
+                                                break;
+                                            }
+                                            Ok(p) => {
+                                                progress = p;
+                                            }
                                         }
-                                        if let Progress::Done(results) = progress {
-                                            result_send.send((id, Ok(results))).unwrap();
-                                        }
-                                        // Always break because we have already finished or a new
-                                        // command is received.
-                                        break;
                                     }
+                                    if let Progress::Done(results) = progress {
+                                        result_send.send((id, Ok(results))).unwrap();
+                                    }
+                                    // Always break because we have already finished or a new
+                                    // command is received.
+                                    break;
                                 }
                             }
-                        };
-                        if let Err(err) = r {
-                            result_send.send((id, Err(err))).unwrap();
                         }
                     }
                     Command::Feed(_) => result_send

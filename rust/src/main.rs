@@ -1,5 +1,3 @@
-#![feature(try_blocks)]
-
 extern crate anyhow;
 extern crate neovim_lib;
 extern crate serde_json;
@@ -37,7 +35,7 @@ impl RequestHandler for EventHandler {
         name: &str,
         args: Vec<Value>,
     ) -> std::result::Result<Value, Value> {
-        let result: Result<Value> = try {
+        let result: Result<Value> = (|| -> Result<Value> {
             match name {
                 "match" => {
                     let query = lookup(&args[0], "query")?
@@ -63,21 +61,21 @@ impl RequestHandler for EventHandler {
                     let matches = self
                         .matcher
                         .best_matches(query, context, num_matches, &lines)?;
-                    Value::from(
+                    Ok(Value::from(
                         matches
                             .into_iter()
                             .map(|m| to_value(m))
                             .collect::<Vec<Value>>(),
-                    )
+                    ))
                 }
                 "selected" => {
                     let selected = JSONLine::from_value(&args[0])?;
                     self.matcher.update(&selected.location.path);
-                    Value::from(true)
+                    Ok(Value::from(true))
                 }
                 f => Err(anyhow!("No such function {}.", f))?,
             }
-        };
+        })();
         result.map_err(|err| Value::from(format!("{:?}", err)))
     }
 }
