@@ -4,12 +4,12 @@ use serde::Deserialize;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone)]
 struct Location {
     path: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone)]
 struct JSONLine {
     line: String,
     location: Location,
@@ -36,7 +36,8 @@ fn incremental(batch_size: usize, num_results: u64, items: &Vec<Query>) {
     let mut matcher = Matcher::new().unwrap();
     for json in items {
         let mut inc_matcher =
-            matcher.incremental_match(&json.query, &json.launched_from, num_results, &json.lines);
+            matcher.incremental_match(json.query.clone(), json.launched_from.clone(), num_results);
+        inc_matcher.feed_lines(json.lines.clone());
         let mut progress = inc_matcher.process(batch_size).unwrap();
         while progress == Progress::Working {
             progress = inc_matcher.process(batch_size).unwrap();
