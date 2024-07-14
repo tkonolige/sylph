@@ -88,24 +88,8 @@ impl Matcher {
         self.frequency.update(entry)
     }
 
-    pub fn score(
-        &mut self,
-        query: &str,
-        context: &str,
-        index: usize,
-        line: &str,
-        path: &str,
-    ) -> Option<Match> {
-        let frequency_score = self.frequency.score(path) * 10.;
-        // Context score decays as the user input gets longer. We want good matches with no
-        // input, it matters less when the user has been explicit about what they want.
-        let context_score = (query.len() as f64 * -0.5).exp()
-            * if context.len() > 0 {
-                0. //textdistance::nstr::levenshtein(line, context) * 10.
-            } else {
-                0.
-            };
-        let query_score = if query.len() > 0 {
+    pub fn query_score(&mut self, query: &str, line: &str) -> Option<f64> {
+        if query.len() > 0 {
             let mut buf = Vec::new();
             let pattern = nucleo_matcher::pattern::Pattern::new(
                 query,
@@ -123,17 +107,37 @@ impl Matcher {
             // whole path match if the basename does not match the query.
             let slash = line.rfind('/');
             match slash {
-                None => whole_score,
+                None => Some(whole_score),
                 Some(ind) => pattern
                     .score(
                         nucleo_matcher::Utf32Str::new(&line[ind..], &mut buf),
                         &mut self.skim_matcher,
                     )
-                    .map_or(whole_score, |x| x as f64),
+                    .map_or(Some(whole_score), |x| Some(x as f64)),
             }
         } else {
-            0.
-        };
+            Some(0.)
+        }
+    }
+
+    pub fn score(
+        &mut self,
+        query: &str,
+        context: &str,
+        index: usize,
+        line: &str,
+        path: &str,
+    ) -> Option<Match> {
+        let frequency_score = self.frequency.score(path) * 10.;
+        // Context score decays as the user input gets longer. We want good matches with no
+        // input, it matters less when the user has been explicit about what they want.
+        let context_score = (query.len() as f64 * -0.5).exp()
+            * if context.len() > 0 {
+                0. //textdistance::nstr::levenshtein(line, context) * 10.
+            } else {
+                0.
+            };
+        let query_score = self.query_score(query, line)?;
         Some(Match {
             index: index,
             score: frequency_score + context_score + query_score,
