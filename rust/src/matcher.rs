@@ -71,16 +71,12 @@ impl Ord for Match {
 
 pub struct Matcher {
     frequency: FrequencyCounter,
-    skim_matcher: nucleo_matcher::Matcher,
 }
 
 impl Matcher {
     pub fn new() -> Result<Self> {
         Ok(Matcher {
             frequency: FrequencyCounter::new()?,
-            skim_matcher: nucleo_matcher::Matcher::new(
-                nucleo_matcher::Config::DEFAULT.match_paths(),
-            ),
         })
     }
 
@@ -90,18 +86,19 @@ impl Matcher {
 
     pub fn query_score(&mut self, query: &str, line: &str) -> Option<f64> {
         if query.len() > 0 {
-            let mut buf = Vec::new();
-            let pattern = nucleo_matcher::pattern::Pattern::new(
+            let mut pattern = frizbee::Matcher::new(
                 query,
-                nucleo_matcher::pattern::CaseMatching::Ignore,
-                nucleo_matcher::pattern::Normalization::Smart,
-                nucleo_matcher::pattern::AtomKind::Fuzzy,
+                &frizbee::Config {
+                    max_typos: Some(4),
+                    casing: frizbee::CaseMatching::Smart,
+                    unicode: frizbee::UnicodeMatching::Smart,
+                    matching: frizbee::Matching::Fuzzy,
+                    sort: frizbee::SortStrategy::ScoreThenIndexDesc,
+                    scoring: frizbee::Scoring::default(),
+                },
             );
             // TODO: only do this match if we cant match basename
-            let whole_score = pattern.score(
-                nucleo_matcher::Utf32Str::new(line, &mut buf),
-                &mut self.skim_matcher,
-            )? as f64;
+            let whole_score = pattern.match_one(line, 0)?.score as f64;
             // Try and find path delimiters, if we find one, then assume we are matching a path.
             // We prioritize matching on the basename component of the path and fall back to the
             // whole path match if the basename does not match the query.
@@ -109,11 +106,8 @@ impl Matcher {
             match slash {
                 None => Some(whole_score),
                 Some(ind) => pattern
-                    .score(
-                        nucleo_matcher::Utf32Str::new(&line[ind..], &mut buf),
-                        &mut self.skim_matcher,
-                    )
-                    .map_or(Some(whole_score), |x| Some(x as f64)),
+                    .match_one(&line[ind..], 0)
+                    .map_or(Some(whole_score), |x| Some(x.score as f64)),
             }
         } else {
             Some(0.)
