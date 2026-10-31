@@ -15,7 +15,7 @@ path = "src/main.rs"
 
 [dependencies]
 fuzzy-matcher = "*"
-neovim-lib = "*"
+nvim-rs = {version = "0.9", features = ["use_tokio"]}
 anyhow = "*"
 itertools = "*"
 frizbee = "0.13.0"
@@ -28,6 +28,8 @@ crossbeam-channel = "*"
 mlua = { version = "*", features = ["luajit", "module"] }
 mlua_derive = "*"
 lru = "*"
+tokio = "*"
+async-trait = "*"
 
 [build-dependencies]
 cbindgen = "*"

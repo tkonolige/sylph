@@ -175,8 +175,8 @@ impl ThreadedMatcher {
     }
 }
 
-impl<'lua> FromLua<'lua> for OwnedLine {
-    fn from_lua(value: Value<'lua>, _: &'lua Lua) -> mlua::Result<Self> {
+impl FromLua for OwnedLine {
+    fn from_lua(value: Value, _: &Lua) -> mlua::Result<Self> {
         match value {
             Value::Table(tbl) => {
                 let line = tbl.get("line")?;
@@ -184,7 +184,7 @@ impl<'lua> FromLua<'lua> for OwnedLine {
                     Value::Table(loc_tbl) => loc_tbl.get("path"),
                     x => Err(mlua::Error::FromLuaConversionError {
                         from: x.type_name(),
-                        to: "location",
+                        to: "location".to_string(),
                         message: Some("expected table".to_string()),
                     }),
                 }?;
@@ -192,15 +192,15 @@ impl<'lua> FromLua<'lua> for OwnedLine {
             }
             _ => Err(mlua::Error::FromLuaConversionError {
                 from: value.type_name(),
-                to: "OwnedLine",
+                to: "OwnedLine".to_string(),
                 message: Some("expected table".to_string()),
             }),
         }
     }
 }
 
-impl<'lua> IntoLua<'lua> for Match {
-    fn into_lua(self, lua: &'lua Lua) -> mlua::Result<Value<'lua>> {
+impl IntoLua for Match {
+    fn into_lua(self, lua: &Lua) -> mlua::Result<Value> {
         let x = vec![
             ("index", self.index.into_lua(lua)?),
             ("score", self.score.into_lua(lua)?),
@@ -214,7 +214,7 @@ impl<'lua> IntoLua<'lua> for Match {
 }
 
 impl UserData for ThreadedMatcher {
-    fn add_methods<'lua, M: LuaUserDataMethods<'lua, Self>>(methods: &mut M) {
+    fn add_methods<'lua, M: LuaUserDataMethods<Self>>(methods: &mut M) {
         methods.add_method_mut("query", |_, this, vals| {
             let (query, context, num_results): (String, String, usize) = vals;
             let command_num = this.query::<OwnedLine>(&query, &context, num_results);

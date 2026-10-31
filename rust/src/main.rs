@@ -1,42 +1,48 @@
 extern crate anyhow;
-extern crate neovim_lib;
+extern crate nvim_rs;
 extern crate serde_json;
 extern crate structopt;
 
 use anyhow::{anyhow, Result};
 use filter::{lookup, Line, Match, Matcher};
-use neovim_lib::{Neovim, RequestHandler, Session, Value};
+use nvim_rs::{compat::tokio::Compat, create::tokio as create, neovim::Neovim, Handler, Value};
 use serde::Deserialize;
+use std::error::Error;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 use structopt::StructOpt;
+use tokio::fs::File as TokioFile;
 
 fn to_value(m: Match) -> Value {
     Value::Map(vec![(Value::from("index"), Value::from(m.index))])
 }
 
+#[derive(Clone)]
 struct EventHandler {
-    matcher: Matcher,
+    matcher: std::sync::Arc<std::sync::Mutex<Matcher>>,
 }
 
 impl EventHandler {
     fn new() -> Result<Self> {
         Ok(EventHandler {
-            matcher: Matcher::new()?,
+            matcher: std::sync::Arc::new(Matcher::new()?.into()),
         })
     }
 }
 
-impl RequestHandler for EventHandler {
-    fn handle_request(
-        &mut self,
-        name: &str,
+#[async_trait::async_trait]
+impl Handler for EventHandler {
+    type Writer = Compat<TokioFile>;
+    async fn handle_request(
+        &self,
+        name: String,
         args: Vec<Value>,
+        _neovim: Neovim<Compat<TokioFile>>,
     ) -> std::result::Result<Value, Value> {
         let result: Result<Value> = (|| -> Result<Value> {
-            match name {
+            match name.as_str() {
                 "match" => {
                     let query = lookup(&args[0], "query")?
                         .as_str()
@@ -60,6 +66,8 @@ impl RequestHandler for EventHandler {
                     )?;
                     let matches = self
                         .matcher
+                        .lock()
+                        .map_err(|_| anyhow!("state mutex poisoned"))?
                         .best_matches(query, context, num_matches, &lines)?;
                     Ok(Value::from(
                         matches
@@ -70,7 +78,10 @@ impl RequestHandler for EventHandler {
                 }
                 "selected" => {
                     let selected = JSONLine::from_value(&args[0])?;
-                    self.matcher.update(&selected.location.path);
+                    self.matcher
+                        .lock()
+                        .map_err(|_| anyhow!("state mutex poisoned"))?
+                        .update(&selected.location.path);
                     Ok(Value::from(true))
                 }
                 f => Err(anyhow!("No such function {}.", f))?,
@@ -134,7 +145,8 @@ struct Query {
     selected: JSONLine,
 }
 
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     let opt = Opts::from_args();
     match opt.test_file {
         Some(path) => {
@@ -202,12 +214,44 @@ fn main() -> Result<()> {
             println!("total time: {:?}", total_time);
         }
         None => {
-            let session = Session::new_parent().unwrap();
-            let mut nvim = Neovim::new(session);
-
             let handler = EventHandler::new()?;
-            let receiver = nvim.session.start_event_loop_channel_handler(handler);
-            for _ in receiver {}
+
+            let (nvim, io_handler) = create::new_parent(handler).await.unwrap();
+
+            // Any error should probably be logged, as stderr is not visible to users.
+            match io_handler.await {
+                Err(joinerr) => eprintln!("Error joining IO loop: '{}'", joinerr),
+                Ok(Err(err)) => {
+                    if !err.is_reader_error() {
+                        // One last try, since there wasn't an error with writing to the
+                        // stream
+                        nvim.err_writeln(&format!("Error: '{}'", err))
+                            .await
+                            .unwrap_or_else(|e| {
+                                // We could inspect this error to see what was happening, and
+                                // maybe retry, but at this point it's probably best
+                                // to assume the worst and print a friendly and
+                                // supportive message to our users
+                                eprintln!("Well, dang... '{}'", e);
+                            });
+                    }
+
+                    if !err.is_channel_closed() {
+                        // Closed channel usually means neovim quit itself, or this plugin was
+                        // told to quit by closing the channel, so it's not always an error
+                        // condition.
+                        eprintln!("Error: '{}'", err);
+
+                        let mut source = err.source();
+
+                        while let Some(e) = source {
+                            eprintln!("Caused by: '{}'", e);
+                            source = e.source();
+                        }
+                    }
+                }
+                Ok(Ok(())) => {}
+            }
         }
     };
     Ok(())

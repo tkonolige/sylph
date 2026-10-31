@@ -3,7 +3,7 @@ use binary_heap_plus::*;
 use itertools::process_results;
 use itertools::Itertools;
 use lru::LruCache;
-use neovim_lib::Value;
+use nvim_rs::Value;
 
 pub fn lookup<'a>(val: &'a Value, key: &str) -> Result<&'a Value> {
     let map: &Vec<(Value, Value)> =
@@ -69,6 +69,7 @@ impl Ord for Match {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct Matcher {
     frequency: FrequencyCounter,
 }
@@ -188,7 +189,7 @@ impl Matcher {
         query: String,
         context: String,
         num_results: u64,
-    ) -> IncrementalMatcher<L> {
+    ) -> IncrementalMatcher<'_, L> {
         IncrementalMatcher::new(self, query, context, num_results as usize)
     }
 }
@@ -266,6 +267,7 @@ impl<'a, L: Line> IncrementalMatcher<'a, L> {
     }
 }
 
+#[derive(Clone, Debug)]
 struct FrequencyCounter {
     cache: LruCache<String, usize>,
     clock: usize,
